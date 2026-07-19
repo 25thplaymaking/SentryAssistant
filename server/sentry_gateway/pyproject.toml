@@ -13,6 +13,10 @@ dependencies = [
     "pyjwt[crypto]>=2.9",
     "argon2-cffi>=23.1",
     "httpx>=0.27",
+    # Reminder recurrence resolves IANA zones. Linux images usually carry the
+    # system tz database, but Windows never does, so declare it rather than
+    # depend on the host and fail only off-container.
+    "tzdata>=2025.1",
 ]
 
 [project.optional-dependencies]
