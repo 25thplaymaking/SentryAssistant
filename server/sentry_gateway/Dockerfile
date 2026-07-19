@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir \
         "uvicorn[standard]>=0.32" \
         "pydantic>=2.9" \
         "pydantic-settings>=2.6" \
+        "email-validator>=2.2" \
         "asyncpg>=0.30" \
         "pyjwt[crypto]>=2.9" \
         "argon2-cffi>=23.1" \
