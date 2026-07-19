@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Sentry.Node;
 using Sentry.Node.Harnesses;
+using Sentry.Node.Hooks;
 using Sentry.Node.Security;
 using Sentry.Node.Workspaces;
 
@@ -13,6 +14,14 @@ using Sentry.Node.Workspaces;
 // path given as the first argument. Secrets come from the environment:
 //   SENTRY_NODE_TOKEN    node-audience access token from device enrolment
 //   SENTRY_SIGNING_KEY   shared key used to validate signed work orders
+
+// Hook management and hook delivery run without a gateway token or a signing
+// key: installing hooks is a local file edit, and receiving one must work on a
+// machine that has never enrolled.
+if (args.Length > 0 && args[0] is "install-hooks" or "uninstall-hooks" or "hook")
+{
+    return HookCommands.Run(args, Console.Out, Console.In);
+}
 
 var configPath = args.Length > 0
     ? args[0]
