@@ -21,6 +21,9 @@ RUN pip install --no-cache-dir \
 
 COPY app ./app
 COPY migrations ./migrations
+# Operator tooling: bootstrapping the first device is an out-of-band step, so it
+# ships with the image rather than existing as an unauthenticated endpoint.
+COPY scripts ./scripts
 
 # Never run the control plane as root.
 RUN useradd --system --uid 10001 --create-home --shell /usr/sbin/nologin sentry \

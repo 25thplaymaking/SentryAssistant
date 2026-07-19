@@ -18,6 +18,7 @@ from .agent_runtime.base import AgentRuntime
 from .agent_runtime.hermes import HermesInstance, HermesRuntime
 from .auth.tokens import TokenService
 from .config import Settings, get_settings
+from .routes import auth as auth_routes
 from .routes import workorders as workorders_routes
 
 
@@ -58,6 +59,21 @@ async def lifespan(app: FastAPI):
     except Exception:
         # Startup must not crash-loop on a database blip; readiness reports it.
         app.state.pool = None
+
+    # Revocation is persisted, so rehydrate it. Without this a gateway restart
+    # would silently un-revoke every device whose token had not yet expired.
+    if app.state.pool is not None and app.state.tokens is not None:
+        try:
+            async with app.state.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT id FROM devices WHERE revoked_at IS NOT NULL"
+                )
+            app.state.tokens.revoked_devices.update(str(r["id"]) for r in rows)
+        except Exception:
+            # Fail closed: without the revocation list we cannot verify tokens
+            # safely, so drop the service and let routes return 503.
+            app.state.tokens = None
+
     try:
         yield
     finally:
@@ -78,6 +94,7 @@ app = FastAPI(
 )
 
 
+app.include_router(auth_routes.router)
 app.include_router(workorders_routes.router)
 
 
