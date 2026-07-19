@@ -131,15 +131,48 @@ bind mount works without any privileged step.
 
 ---
 
+## 3b. Authenticated API — built and verified live
+
+Device enrollment, token rotation, and revocation are implemented and proven
+against the running Gateway.
+
+- **Enrollment is two-sided.** A code is mintable only from an authenticated
+  session and redeemable once within five minutes. The first device is
+  bootstrapped by an out-of-band operator script
+  (`scripts/bootstrap_device.py`), so the API has no unauthenticated hole.
+- **Refresh tokens rotate.** The presented token is retired as it is used;
+  replay fails, and an access token cannot stand in for a refresh token.
+- **Revocation is immediate and durable.** It is rehydrated from the database at
+  startup — otherwise a restart would silently un-revoke every unexpired token.
+  If the list cannot be loaded, the token service is dropped and routes return
+  503 rather than failing open.
+- **Refusals are indistinguishable.** Unknown, consumed, and expired codes give
+  the same message. Revoking another user's device returns 404, not 403, so IDs
+  cannot be enumerated.
+
+**Evidence:** 20/20 auth checks pass live, plus a separate restart test showing a
+revoked token is still refused after the process comes back. 13/13 work-order
+checks. 81/81 unit tests.
+
+A bug caught by the first live run and fixed: denied decisions were written
+inside the transaction that then rolled back on raise, so refusals were never
+persisted. They now commit on their own connection (`denied=0` → `denied=2`).
+
 ## 4. Not yet built
 
 Deployed is the control-plane foundation, not the whole platform. Still absent:
-OIDC/Authentik browser sign-in and passkeys, the profile/team HTTP API on top of
-the schema, the Windows Sentry Node and its Codex/Claude/Grok adapters, the
-connectors (Gmail, Discord, Steam), reminders, notification routing and APNs,
-governed skill evaluation, and backup/restore. The schema and the tested domain
-logic for profiles, teams, work orders, runs, and audit exist; the routes that
-expose them do not.
+OIDC/Authentik browser sign-in and passkeys, the **team** HTTP API (invitations,
+membership, roles, sharing) on top of the schema, the Windows Sentry Node and its
+Codex/Claude/Grok adapters, the connectors (Gmail, Discord, Steam), reminders,
+notification routing and APNs, governed skill evaluation, and backup/restore.
+
+Personal profiles are live end to end. Teams exist in the schema and in the
+tested authorization logic — a removed member already loses access, and observers
+already cannot dispatch — but no route creates a team or sends an invitation yet.
+
+"Trusted execution" is half done: work orders are signed and the node-side
+validator is written and tested (`work_order_signing.py`), but no Windows Node
+process exists to receive them, so nothing has actually executed on a node.
 
 Do not describe Sentry as production-ready. By the plan's own gate list this is
 short of Gate 1 until the inference provider is set and a node is enrolled.
