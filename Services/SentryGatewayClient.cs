@@ -6,6 +6,21 @@ using Sentry.Contracts;
 namespace SentryAssistant.Services;
 
 /// <summary>
+/// Durable storage for this desktop's device credential.
+///
+/// An interface rather than a direct dependency on the settings file so the
+/// rotation ordering can be reasoned about — and tested — without a real
+/// Windows credential store.
+/// </summary>
+public interface IDeviceCredentialStore
+{
+    bool HasRefreshToken { get; }
+    string GetRefreshToken();
+    Task SetRefreshTokenAsync(string value);
+    Task ClearRefreshTokenAsync();
+}
+
+/// <summary>
 /// The desktop's connection to the Sentry Gateway.
 ///
 /// Only reports what it has actually observed. A probe that fails produces
@@ -18,11 +33,21 @@ public sealed class SentryGatewayClient : IDisposable
 
     private readonly HttpClient _client;
     private readonly bool _configured;
+    private readonly IDeviceCredentialStore? _credentials;
 
-    public SentryGatewayClient(string? baseUrl, HttpClient? client = null)
+    // Access tokens last fifteen minutes, so any long-lived screen outlives one.
+    // A single in-flight refresh keeps a burst of expiries from racing each
+    // other and retiring one another's rotated tokens.
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
+
+    public SentryGatewayClient(
+        string? baseUrl,
+        HttpClient? client = null,
+        IDeviceCredentialStore? credentials = null)
     {
         _configured = !string.IsNullOrWhiteSpace(baseUrl);
         _client = client ?? new HttpClient();
+        _credentials = credentials;
 
         if (_configured)
         {
@@ -128,12 +153,161 @@ public sealed class SentryGatewayClient : IDisposable
                 return (false, "Gateway returned no credentials.");
             }
 
-            _accessToken = pair.AccessToken;
+            await AdoptAsync(pair);
             return (true, $"Enrolled as device {pair.DeviceId}.");
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
             return (false, "Gateway unreachable.");
+        }
+    }
+
+    /// <summary>
+    /// Resume a saved session at launch, so enrolment is a one-time act rather
+    /// than something repeated on every start.
+    /// </summary>
+    public async Task<SessionRestore> RestoreSessionAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!_configured)
+        {
+            return new SessionRestore(SessionRestoreOutcome.NoGatewayConfigured);
+        }
+
+        if (_credentials is null || !_credentials.HasRefreshToken)
+        {
+            return new SessionRestore(SessionRestoreOutcome.NoStoredCredential);
+        }
+
+        var stored = _credentials.GetRefreshToken();
+        if (string.IsNullOrWhiteSpace(stored))
+        {
+            // Sealed by a different Windows account, so unusable here.
+            return new SessionRestore(
+                SessionRestoreOutcome.NoStoredCredential,
+                "Stored credentials could not be read by this Windows account.");
+        }
+
+        return await RedeemAsync(stored, cancellationToken);
+    }
+
+    /// <summary>
+    /// Exchange a refresh token for a fresh pair. The gateway retires the
+    /// presented token as it is redeemed, so the replacement is written to
+    /// durable storage before this returns.
+    /// </summary>
+    private async Task<SessionRestore> RedeemAsync(
+        string refreshToken, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await _client.PostAsJsonAsync(
+                "api/auth/refresh",
+                new { refresh_token = refreshToken },
+                Json,
+                cancellationToken);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                // Terminal: revoked, expired, or already redeemed. Keeping the
+                // token would reproduce this failure on every launch.
+                if (_credentials is not null) await _credentials.ClearRefreshTokenAsync();
+                _accessToken = null;
+
+                // The gateway distinguishes "Device has been revoked" from a
+                // retired or expired token. That distinction is the difference
+                // between "an administrator did this" and "this simply lapsed",
+                // so it is worth carrying through to the screen.
+                var reason = await ReadDetailAsync(response, cancellationToken);
+                return new SessionRestore(
+                    SessionRestoreOutcome.Revoked,
+                    string.IsNullOrWhiteSpace(reason)
+                        ? "Stored credentials were rejected. Redeem a new enrolment code."
+                        : $"{reason} Redeem a new enrolment code.");
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return new SessionRestore(
+                    SessionRestoreOutcome.Unreachable,
+                    $"Gateway refused the credential refresh ({(int)response.StatusCode}).");
+            }
+
+            var pair = await response.Content.ReadFromJsonAsync<TokenPair>(Json, cancellationToken);
+            if (pair is null || string.IsNullOrWhiteSpace(pair.AccessToken))
+            {
+                return new SessionRestore(
+                    SessionRestoreOutcome.Unreachable, "Gateway returned no credentials.");
+            }
+
+            await AdoptAsync(pair);
+            return new SessionRestore(SessionRestoreOutcome.Restored);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+            // Deliberately not Revoked: an unreachable gateway says nothing about
+            // whether the credential is still good, and the stored token stays.
+            return new SessionRestore(SessionRestoreOutcome.Unreachable);
+        }
+    }
+
+    /// <summary>
+    /// Pull the gateway's own explanation out of an error response, so the screen
+    /// can say what actually happened instead of a generic stand-in.
+    /// </summary>
+    private static async Task<string> ReadDetailAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var problem = await response.Content.ReadFromJsonAsync<ErrorDetail>(
+                Json, cancellationToken);
+            return problem?.Detail ?? string.Empty;
+        }
+        catch (Exception)
+        {
+            // An unparseable error body is not itself worth reporting; the caller
+            // already has a usable fallback.
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Take up a freshly issued pair. The rotated refresh token reaches disk
+    /// before the access token is put to use, because a rotation that is lost to
+    /// a crash cannot be recovered — the gateway has already retired its
+    /// predecessor.
+    /// </summary>
+    private async Task AdoptAsync(TokenPair pair)
+    {
+        if (_credentials is not null && !string.IsNullOrWhiteSpace(pair.RefreshToken))
+        {
+            await _credentials.SetRefreshTokenAsync(pair.RefreshToken);
+        }
+
+        _accessToken = pair.AccessToken;
+    }
+
+    /// <summary>
+    /// Renew the access token using the stored refresh token. Returns whether a
+    /// usable access token is now held.
+    /// </summary>
+    private async Task<bool> TryRenewAsync(CancellationToken cancellationToken)
+    {
+        if (_credentials is null || !_credentials.HasRefreshToken) return false;
+
+        await _refreshGate.WaitAsync(cancellationToken);
+        try
+        {
+            var stored = _credentials.GetRefreshToken();
+            if (string.IsNullOrWhiteSpace(stored)) return false;
+
+            var restore = await RedeemAsync(stored, cancellationToken);
+            return restore.IsAuthenticated;
+        }
+        finally
+        {
+            _refreshGate.Release();
         }
     }
 
@@ -163,36 +337,82 @@ public sealed class SentryGatewayClient : IDisposable
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, "api/admin/hermes");
-            request.Headers.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _accessToken);
-
             // This endpoint probes the runtime for a live model, which is far
             // slower than a status poll. The client-wide 6s budget times it out.
             using var slow = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             slow.CancelAfter(TimeSpan.FromSeconds(45));
 
-            using var response = await _client.SendAsync(request, slow.Token);
+            var response = await SendAuthorizedAsync(
+                () => new HttpRequestMessage(HttpMethod.Get, "api/admin/hermes"), slow.Token);
 
-            if (response.StatusCode is System.Net.HttpStatusCode.NotFound
-                or System.Net.HttpStatusCode.Forbidden)
+            using (response)
             {
-                return (AdminAccess.NotAdministrator, null);
+                if (response.StatusCode is System.Net.HttpStatusCode.NotFound
+                    or System.Net.HttpStatusCode.Forbidden)
+                {
+                    return (AdminAccess.NotAdministrator, null);
+                }
+
+                // Still unauthorized after a renewal attempt: the credential is
+                // gone, not merely stale.
+                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    return (AdminAccess.NotEnrolled, null);
+                }
+
+                if (!response.IsSuccessStatusCode) return (AdminAccess.Unreachable, null);
+
+                var snapshot = await response.Content.ReadFromJsonAsync<HermesAdminSnapshot>(
+                    Json, slow.Token);
+
+                return snapshot is null
+                    ? (AdminAccess.Unreachable, null)
+                    : (AdminAccess.Granted, snapshot);
             }
-
-            if (!response.IsSuccessStatusCode) return (AdminAccess.Unreachable, null);
-
-            var snapshot = await response.Content.ReadFromJsonAsync<HermesAdminSnapshot>(
-                Json, slow.Token);
-
-            return snapshot is null
-                ? (AdminAccess.Unreachable, null)
-                : (AdminAccess.Granted, snapshot);
         }
         catch (Exception)
         {
             return (AdminAccess.Unreachable, null);
         }
+    }
+
+    /// <summary>
+    /// Send a request bearing the access token, renewing once if the gateway
+    /// says it has expired.
+    ///
+    /// Access tokens last fifteen minutes, so a window left open longer than a
+    /// coffee break will hold a dead one. Without this, an expired token reads
+    /// as an unreachable gateway and points at the wrong problem.
+    /// </summary>
+    /// <param name="build">
+    /// Builds the request. A factory rather than an instance because a sent
+    /// <see cref="HttpRequestMessage"/> cannot be sent a second time.
+    /// </param>
+    private async Task<HttpResponseMessage> SendAuthorizedAsync(
+        Func<HttpRequestMessage> build, CancellationToken cancellationToken)
+    {
+        var response = await SendOnceAsync(build, cancellationToken);
+        if (response.StatusCode != System.Net.HttpStatusCode.Unauthorized) return response;
+
+        response.Dispose();
+        if (!await TryRenewAsync(cancellationToken))
+        {
+            // Report the original refusal rather than inventing a status.
+            return new HttpResponseMessage(System.Net.HttpStatusCode.Unauthorized);
+        }
+
+        return await SendOnceAsync(build, cancellationToken);
+    }
+
+    private async Task<HttpResponseMessage> SendOnceAsync(
+        Func<HttpRequestMessage> build, CancellationToken cancellationToken)
+    {
+        // Safe to dispose the request once the response is in hand: these carry
+        // no request body whose stream the response could still be reading.
+        using var request = build();
+        request.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _accessToken);
+        return await _client.SendAsync(request, cancellationToken);
     }
 
     private string? _accessToken;
@@ -206,7 +426,11 @@ public sealed class SentryGatewayClient : IDisposable
         ComponentStatus.NotConfigured("Windows node", "Run sentry-node to enrol this machine"),
         checkedAt);
 
-    public void Dispose() => _client.Dispose();
+    public void Dispose()
+    {
+        _client.Dispose();
+        _refreshGate.Dispose();
+    }
 
     // The Gateway's Pydantic response models serialize snake_case, which the Web
     // JSON defaults (camelCase) do not match. Naming each field explicitly is the
@@ -217,6 +441,9 @@ public sealed class SentryGatewayClient : IDisposable
         [property: JsonPropertyName("refresh_token")] string RefreshToken,
         [property: JsonPropertyName("device_id")] Guid DeviceId,
         [property: JsonPropertyName("profile_id")] Guid ProfileId);
+
+    // FastAPI reports refusals as {"detail": "..."}.
+    private sealed record ErrorDetail([property: JsonPropertyName("detail")] string? Detail);
 
     // Mirrors the Gateway's /health/ready payload.
     private sealed record ReadyResponse(string Status, ReadyChecks? Checks);

@@ -52,21 +52,27 @@ public sealed partial class MainPage : Page
             DateTimeOffset.Now));
         ActivityLog.Insert(0, "Sentry Assistant started.");
 
-        _gateway = new SentryGatewayClient(_settings.Settings.GatewayUrl);
-
-        // A previously saved address means step one is already satisfied, so the
-        // walkthrough opens where the person actually is rather than at the start.
+        _gateway = new SentryGatewayClient(_settings.Settings.GatewayUrl, credentials: _settings);
         SetupGatewayBox.Text = _settings.Settings.GatewayUrl;
-        if (!string.IsNullOrWhiteSpace(_settings.Settings.GatewayUrl))
-        {
-            _setup = _setup.With(
-                SetupStepId.GatewayAddress, SetupStepState.Done,
-                $"Saved: {_settings.Settings.GatewayUrl}");
-        }
 
-        // Render the initial state so accessible names and enabled states match
-        // the state machine before any button is pressed.
+        // Resume a stored device credential rather than making someone redeem a
+        // fresh enrolment code every launch. The outcome decides where the
+        // walkthrough opens, including the case where the credential was revoked.
+        var restore = await _gateway.RestoreSessionAsync();
+        _setup = restore.ToProgress(_settings.Settings.GatewayUrl);
+
+        // Render before any button is pressed so accessible names and enabled
+        // states match the state machine from the outset.
         RenderSetup();
+
+        if (restore.IsAuthenticated)
+        {
+            ActivityLog.Insert(0, $"{DateTime.Now:t} Signed in with stored credentials.");
+        }
+        else if (restore.RequiresReEnrolment)
+        {
+            ActivityLog.Insert(0, $"{DateTime.Now:t} Stored credentials were rejected.");
+        }
 
         await RefreshGatewayStatusAsync();
     }
@@ -176,7 +182,7 @@ public sealed partial class MainPage : Page
         SetSetupStep(SetupStepId.GatewayAddress, SetupStepState.Working, "Contacting gateway...");
 
         _gateway?.Dispose();
-        _gateway = new SentryGatewayClient(address);
+        _gateway = new SentryGatewayClient(address, credentials: _settings);
         var status = await _gateway.GetStatusAsync();
 
         if (status.Gateway.IsHealthy)
@@ -185,6 +191,16 @@ public sealed partial class MainPage : Page
             await _settings.SaveAsync();
             SetSetupStep(SetupStepId.GatewayAddress, SetupStepState.Done, $"Connected to {address}.");
             ActivityLog.Insert(0, $"{DateTime.Now:t} Gateway address saved.");
+
+            // A gateway that has just come back — a tunnel restarted, say — can
+            // often be resumed with the credential already on disk, which turns a
+            // three-step recovery back into one.
+            var restore = await _gateway.RestoreSessionAsync();
+            if (restore.IsAuthenticated || restore.RequiresReEnrolment)
+            {
+                _setup = restore.ToProgress(address);
+                RenderSetup();
+            }
         }
         else
         {
