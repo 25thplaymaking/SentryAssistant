@@ -443,17 +443,36 @@
                         </Grid>
                     </Border>
 
+                    <!--
+                        Live values from GET /health/ready. These were hardcoded
+                        labels; anything unverified now reads UNKNOWN rather than
+                        implying a connection that was never checked.
+                    -->
                     <StackPanel Spacing="7">
-                        <TextBlock Text="CONTROL PLANE" Style="{StaticResource SentryEyebrowTextStyle}" />
-                        <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="Gateway" /><TextBlock Grid.Column="1" Text="LOCAL" Foreground="{ThemeResource SentryWarningBrush}" Style="{StaticResource SentryMonoMetaTextStyle}" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="CONTROL PLANE" Style="{StaticResource SentryEyebrowTextStyle}" VerticalAlignment="Center" />
+                            <Button Grid.Column="1" x:Name="RefreshStatusButton" Click="RefreshStatus_Click"
+                                    Style="{StaticResource SentryIconButtonStyle}" Width="24" Height="24"
+                                    AutomationProperties.Name="Refresh control plane status"
+                                    ToolTipService.ToolTip="Re-check the gateway now">
+                                <FontIcon Glyph="&#xE72C;" FontSize="11" />
+                            </Button>
                         </Grid>
                         <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="Hermes runtime" /><TextBlock Grid.Column="1" Text="PLANNED" Style="{StaticResource SentryMonoMetaTextStyle}" />
+                            <TextBlock Text="Gateway" />
+                            <TextBlock x:Name="GatewayStatusText" Grid.Column="1" Text="UNKNOWN" Style="{StaticResource SentryMonoMetaTextStyle}" />
                         </Grid>
                         <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="Windows node" /><TextBlock Grid.Column="1" Text="ONLINE" Foreground="{ThemeResource SentrySuccessBrush}" Style="{StaticResource SentryMonoMetaTextStyle}" />
+                            <TextBlock Text="Runtime" />
+                            <TextBlock x:Name="RuntimeStatusText" Grid.Column="1" Text="UNKNOWN" Style="{StaticResource SentryMonoMetaTextStyle}" />
                         </Grid>
+                        <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="Windows node" />
+                            <TextBlock x:Name="NodeStatusText" Grid.Column="1" Text="UNKNOWN" Style="{StaticResource SentryMonoMetaTextStyle}" />
+                        </Grid>
+                        <TextBlock x:Name="StatusDetailText" Text="Not checked yet" TextWrapping="WrapWholeWords"
+                                   Style="{StaticResource SentryMonoMetaTextStyle}" />
                     </StackPanel>
 
                     <Border Height="1" Background="{ThemeResource SentryBorderBrush}" />

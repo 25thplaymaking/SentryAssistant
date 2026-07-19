@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Sentry.Contracts;
 using SentryAssistant.Models;
 using SentryAssistant.Services;
@@ -21,6 +22,7 @@ public sealed partial class MainPage : Page
     private readonly MicrophoneService _microphone = new();
     private readonly MediaPlayer _player = new();
     private OpenAIService? _openAI;
+    private SentryGatewayClient? _gateway;
     private FileSystemWatcher? _watcher;
     private SentryLifecycleState _lifecycleState = SentryLifecycleState.Idle;
     private readonly Dictionary<string, DateTimeOffset> _recentChanges = new(StringComparer.OrdinalIgnoreCase);
@@ -49,7 +51,60 @@ public sealed partial class MainPage : Page
             "Online. I can help directly, accept a voice reply, or watch a code workspace for changes.",
             DateTimeOffset.Now));
         ActivityLog.Insert(0, "Sentry Assistant started.");
+
+        _gateway = new SentryGatewayClient(_settings.Settings.GatewayUrl);
+        await RefreshGatewayStatusAsync();
     }
+
+    /// <summary>
+    /// Replaces what were hardcoded status labels. Anything not actually probed
+    /// shows UNKNOWN rather than implying a connection that was never checked.
+    /// </summary>
+    private async Task RefreshGatewayStatusAsync()
+    {
+        if (_gateway is null) return;
+
+        RefreshStatusButton.IsEnabled = false;
+        try
+        {
+            var status = await _gateway.GetStatusAsync();
+            Apply(GatewayStatusText, status.Gateway);
+            Apply(RuntimeStatusText, status.Runtime);
+            Apply(NodeStatusText, status.Node);
+
+            StatusDetailText.Text = _gateway.IsConfigured
+                ? $"{status.Gateway.Detail} · checked {status.CheckedAt:t}"
+                : "Set a gateway address in Settings to connect.";
+        }
+        finally
+        {
+            RefreshStatusButton.IsEnabled = true;
+        }
+    }
+
+    private void Apply(TextBlock target, ComponentStatus status)
+    {
+        target.Text = status.Label;
+        target.Foreground = ToneBrush(status.Tone);
+        ToolTipService.SetToolTip(target, status.Detail);
+        AutomationProperties.SetName(target, $"{status.Name}: {status.Label}. {status.Detail}");
+    }
+
+    private Brush ToneBrush(PresenceTone tone)
+    {
+        var key = tone switch
+        {
+            PresenceTone.Positive => "SentrySuccessBrush",
+            PresenceTone.Pending => "SentryWarningBrush",
+            PresenceTone.Attention => "SentryInfoBrush",
+            PresenceTone.Critical => "SentryDangerBrush",
+            _ => "SentryTextMutedBrush"
+        };
+        return (Brush)Application.Current.Resources[key];
+    }
+
+    private async void RefreshStatus_Click(object sender, RoutedEventArgs e) =>
+        await RefreshGatewayStatusAsync();
 
     private void ApplySettingsToControls()
     {

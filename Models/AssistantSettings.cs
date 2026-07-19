@@ -15,4 +15,11 @@ public sealed class AssistantSettings
     public bool StartWithWindows { get; set; }
     public bool NotifyOnCodeChanges { get; set; } = true;
     public string WatchedFolder { get; set; } = @"C:\Users\Bryce\Desktop\25thVID-Website";
+
+    /// <summary>
+    /// Sentry Gateway base address. Empty means the desktop is running
+    /// standalone, which the shell reports as "not set up" rather than as a
+    /// failure. Not a secret: the gateway is authenticated separately.
+    /// </summary>
+    public string GatewayUrl { get; set; } = string.Empty;
 }
