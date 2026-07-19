@@ -45,3 +45,6 @@ deploy/linux/data/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Node host local configuration (names local paths)
+appsettings.node.json

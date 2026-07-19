@@ -83,21 +83,22 @@ async def register_node(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
+            # Registration runs on every node start, so it must be idempotent and
+            # must keep the same node id. Conflicting on device_id (not id, which
+            # is freshly generated and can never conflict) is what makes a restart
+            # return the node's existing identity instead of minting a new one.
             node_id = await conn.fetchval(
                 """
                 INSERT INTO execution_nodes (owner_user_id, device_id, name, last_seen_at)
                 VALUES ($1, $2, $3, now())
-                ON CONFLICT (id) DO NOTHING
+                ON CONFLICT (device_id) DO UPDATE
+                    SET name = EXCLUDED.name, last_seen_at = now()
                 RETURNING id
                 """,
                 caller.user_id,
                 caller.device_id,
                 body.name,
             )
-            if node_id is None:
-                node_id = await conn.fetchval(
-                    "SELECT id FROM execution_nodes WHERE device_id = $1", caller.device_id
-                )
 
             for workspace in body.workspaces:
                 # Elevated mode is never registrable; it requires per-run owner
