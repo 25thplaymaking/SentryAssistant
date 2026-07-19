@@ -12,23 +12,32 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Grid>
+    <Grid Background="{ThemeResource SentryBackgroundBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <TitleBar x:Name="AppTitleBar" Title="Sentry Assistant">
-            <TitleBar.IconSource>
-                <ImageIconSource ImageSource="Assets/AppIcon.ico" />
-            </TitleBar.IconSource>
-        </TitleBar>
+        <Grid x:Name="AppTitleBar" Height="48" Padding="14,0,150,0" Background="{ThemeResource SentryRailBrush}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="234" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="10">
+                <Border Width="26" Height="26" CornerRadius="8" Background="{ThemeResource SentryAccentMutedBrush}">
+                    <FontIcon Glyph="&#xE7BA;" FontSize="14" Foreground="{ThemeResource SentryAccentBrush}" />
+                </Border>
+                <TextBlock Text="SENTRY" Style="{StaticResource SentryEyebrowTextStyle}" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Grid.Column="1" Text="Personal operations console" VerticalAlignment="Center"
+                       Foreground="{ThemeResource SentryTextMutedBrush}" FontSize="12" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
+                <Ellipse Width="6" Height="6" Fill="{ThemeResource SentrySuccessBrush}" />
+                <TextBlock Text="LOCAL" Style="{StaticResource SentryMonoMetaTextStyle}" />
+            </StackPanel>
+        </Grid>
 
-        <!--
-            The Frame hosts pages for your application content. Add your UI to
-            MainPage.xaml rather than here so you can use Page features such as
-            navigation events and the Loaded lifecycle.
-        -->
         <Frame x:Name="RootFrame" Grid.Row="1" />
     </Grid>
 </Window>

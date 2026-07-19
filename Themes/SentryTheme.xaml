@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Default">
+            <SolidColorBrush x:Key="SentryBackgroundBrush" Color="#FF171918" />
+            <SolidColorBrush x:Key="SentryRailBrush" Color="#FF1C1F1D" />
+            <SolidColorBrush x:Key="SentrySurfaceBrush" Color="#FF222522" />
+            <SolidColorBrush x:Key="SentrySurfaceElevatedBrush" Color="#FF2A2D2A" />
+            <SolidColorBrush x:Key="SentrySurfaceHoverBrush" Color="#FF30342F" />
+            <SolidColorBrush x:Key="SentryBorderBrush" Color="#18FFFFFF" />
+            <SolidColorBrush x:Key="SentryBorderStrongBrush" Color="#2EFFFFFF" />
+            <SolidColorBrush x:Key="SentryTextPrimaryBrush" Color="#FFF2F4F0" />
+            <SolidColorBrush x:Key="SentryTextSecondaryBrush" Color="#B8F2F4F0" />
+            <SolidColorBrush x:Key="SentryTextMutedBrush" Color="#7AF2F4F0" />
+            <SolidColorBrush x:Key="SentryAccentBrush" Color="#FFA9C88E" />
+            <SolidColorBrush x:Key="SentryAccentMutedBrush" Color="#2EA9C88E" />
+            <SolidColorBrush x:Key="SentryNavSelectedBrush" Color="#1FFFFFFF" />
+            <SolidColorBrush x:Key="SentrySuccessBrush" Color="#FF8FC77C" />
+            <SolidColorBrush x:Key="SentryWarningBrush" Color="#FFE0B56A" />
+            <SolidColorBrush x:Key="SentryDangerBrush" Color="#FFE77D70" />
+            <SolidColorBrush x:Key="SentryInfoBrush" Color="#FF78A9D1" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="SentryBackgroundBrush" Color="#FFF7F8F5" />
+            <SolidColorBrush x:Key="SentryRailBrush" Color="#FFF0F2EE" />
+            <SolidColorBrush x:Key="SentrySurfaceBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="SentrySurfaceElevatedBrush" Color="#FFF8FAF6" />
+            <SolidColorBrush x:Key="SentrySurfaceHoverBrush" Color="#FFE9ECE6" />
+            <SolidColorBrush x:Key="SentryBorderBrush" Color="#140D0F0D" />
+            <SolidColorBrush x:Key="SentryBorderStrongBrush" Color="#2B0D0F0D" />
+            <SolidColorBrush x:Key="SentryTextPrimaryBrush" Color="#FF101210" />
+            <SolidColorBrush x:Key="SentryTextSecondaryBrush" Color="#A3101210" />
+            <SolidColorBrush x:Key="SentryTextMutedBrush" Color="#78101210" />
+            <SolidColorBrush x:Key="SentryAccentBrush" Color="#FF4F782E" />
+            <SolidColorBrush x:Key="SentryAccentMutedBrush" Color="#244F782E" />
+            <SolidColorBrush x:Key="SentryNavSelectedBrush" Color="#140D0F0D" />
+            <SolidColorBrush x:Key="SentrySuccessBrush" Color="#FF4F782E" />
+            <SolidColorBrush x:Key="SentryWarningBrush" Color="#FF94651A" />
+            <SolidColorBrush x:Key="SentryDangerBrush" Color="#FFB53D31" />
+            <SolidColorBrush x:Key="SentryInfoBrush" Color="#FF2B6D9E" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="SentryBackgroundBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="SentryRailBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="SentrySurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="SentrySurfaceElevatedBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="SentrySurfaceHoverBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="SentryBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="SentryBorderStrongBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="SentryTextPrimaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="SentryTextSecondaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="SentryTextMutedBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
+            <SolidColorBrush x:Key="SentryAccentBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="SentryAccentMutedBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="SentryNavSelectedBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="SentrySuccessBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="SentryWarningBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="SentryDangerBrush" Color="{ThemeResource SystemColorHotlightColor}" />
+            <SolidColorBrush x:Key="SentryInfoBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
+    <CornerRadius x:Key="SentryControlRadius">10</CornerRadius>
+    <CornerRadius x:Key="SentrySurfaceRadius">14</CornerRadius>
+    <Thickness x:Key="SentryHairline">1</Thickness>
+</ResourceDictionary>

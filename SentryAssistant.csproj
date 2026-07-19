@@ -28,6 +28,13 @@
     <Content Include="Assets\Sentry.png" />
   </ItemGroup>
 
+  <!-- The app predates the solution layout and remains at the repository root. -->
+  <ItemGroup>
+    <Compile Remove="src\**\*.cs;tests\**\*.cs" />
+    <EmbeddedResource Remove="src\**\*;tests\**\*" />
+    <None Remove="src\**\*;tests\**\*" />
+  </ItemGroup>
+
   <ItemGroup>
     <Manifest Include="$(ApplicationManifest)" />
   </ItemGroup>

@@ -139,14 +139,14 @@ public sealed record NotificationEnvelope(
 public enum NotificationSeverity { Routine, Important, Urgent, Security }
 ```
 
-- [ ] Initialize Git with branch `main`, record the current WinUI prototype as the baseline, and ensure `bin/`, `obj/`, local secrets, recordings, and generated packages are ignored.
-- [ ] Add the solution, contracts project, and xUnit contract tests.
-- [ ] Test JSON round-tripping and reject expired work orders, missing requester/profile/conversation identity, unknown states/modes, and empty completion criteria. Permit drafts without harness, workspace, assignee, or node; require those fields before transition to `Assigned` or `InProgress`.
-- [ ] Establish an original Sentry design system inspired by Codex's interaction grammar without copying OpenAI branding or assets: restrained neutral surfaces, compact 30-pixel navigation rows, 10-pixel control radii, a readable conversation column capped near 42rem, low-chrome dividers, and quiet status color reserved for actionable state.
-- [ ] Replace the generic `NavigationView` presentation with a custom adaptive three-zone shell: a narrow workstream rail, a focused conversation/command canvas, and a collapsible evidence/status inspector. Keep the composer docked, make active profile/workspace/harness identity continuously visible, and collapse the inspector and rail labels at smaller widths.
-- [ ] Add purposeful, reduced-motion-aware state transitions for `Queued`, `Running`, `NeedsInput`, and `Resolved`; working states may pulse or travel subtly, while only `Resolved` receives the distinct completion flourish tied to optional one-sentence speech.
+- [x] Initialize Git with branch `main`, record the current WinUI prototype as the baseline, and ensure `bin/`, `obj/`, local secrets, recordings, and generated packages are ignored.
+- [x] Add the solution, contracts project, and xUnit contract tests.
+- [x] Test JSON round-tripping and reject expired work orders, missing requester/profile/conversation identity, unknown states/modes, and empty completion criteria. Permit drafts without harness, workspace, assignee, or node; require those fields before transition to `Assigned` or `InProgress`.
+- [x] Establish an original Sentry design system inspired by Codex's interaction grammar without copying OpenAI branding or assets: restrained neutral surfaces, compact 30-pixel navigation rows, 10-pixel control radii, a readable conversation column capped near 42rem, low-chrome dividers, and quiet status color reserved for actionable state.
+- [x] Replace the generic `NavigationView` presentation with a custom adaptive three-zone shell: a narrow workstream rail, a focused conversation/command canvas, and a collapsible evidence/status inspector. Keep the composer docked, make active profile/workspace/harness identity continuously visible, and collapse the inspector and rail labels at smaller widths.
+- [x] Add purposeful, reduced-motion-aware state transitions for `Queued`, `Running`, `NeedsInput`, and `Resolved`; working states may pulse or travel subtly, while only `Resolved` receives the distinct completion flourish tied to optional one-sentence speech.
 - [ ] Build and launch the packaged WinUI app, visually verify the real window at normal and narrow widths in light, dark, and high-contrast themes, and confirm keyboard navigation and accessible names before treating the shell foundation as complete.
-- [ ] Run `dotnet test SentryAssistant.sln -c Debug -p:Platform=x64`; expected result: all contract tests pass.
+- [x] Run `dotnet test SentryAssistant.sln -c Debug -p:Platform=x64`; expected result: all contract tests pass.
 - [ ] Commit `chore: baseline Sentry assistant and work-order contracts`.
 
 ### Task 2: Prove the runtime boundary, select the agent runtime, and deploy the private Linux control plane

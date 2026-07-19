@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using SentryAssistant.Models;
 using SentryAssistant.Services;
@@ -37,7 +38,8 @@ public sealed partial class MainPage : Page
         await _settings.LoadAsync();
         _openAI = new OpenAIService(_settings);
         ApplySettingsToControls();
-        Shell.SelectedItem = Shell.MenuItems[0];
+        NavigateTo("assistant");
+        SetLifecycleState("Idle", "READY", "Awaiting work order");
         Messages.Add(new AssistantMessage("Sentry", "Online. I can help directly, accept a voice reply, or watch a code workspace for changes.", DateTimeOffset.Now));
         ActivityLog.Insert(0, "Sentry Assistant started.");
     }
@@ -55,6 +57,7 @@ public sealed partial class MainPage : Page
         VoiceStyleBox.Text = value.VoiceStyle;
         SettingsSpeakToggle.IsOn = value.SpeakResolutions;
         SpeakToggle.IsOn = value.SpeakResolutions;
+        InspectorSpeakToggle.IsOn = value.SpeakResolutions;
         SettingsWatchPathBox.Text = value.WatchedFolder;
         WatchPathBox.Text = value.WatchedFolder;
         NotifyChangesToggle.IsOn = value.NotifyOnCodeChanges;
@@ -62,16 +65,45 @@ public sealed partial class MainPage : Page
         ApiKeyStatusText.Text = string.IsNullOrWhiteSpace(_settings.GetApiKey()) ? "No API key is configured." : "API key is protected for this Windows account.";
     }
 
-    private void Shell_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    private void Navigate_Click(object sender, RoutedEventArgs e)
     {
-        var tag = (args.SelectedItem as NavigationViewItem)?.Tag as string ?? "assistant";
+        NavigateTo((sender as ToggleButton)?.Tag as string ?? "assistant");
+    }
+
+    private void NavigateTo(string tag)
+    {
         AssistantPage.Visibility = tag == "assistant" ? Visibility.Visible : Visibility.Collapsed;
         WatcherPage.Visibility = tag == "watcher" ? Visibility.Visible : Visibility.Collapsed;
         ActivityPage.Visibility = tag == "activity" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = tag == "settings" ? Visibility.Visible : Visibility.Collapsed;
+
+        AssistantNavButton.IsChecked = tag == "assistant";
+        WatcherNavButton.IsChecked = tag == "watcher";
+        ActivityNavButton.IsChecked = tag == "activity";
+        SettingsNavButton.IsChecked = tag == "settings";
+        CurrentPageTitle.Text = tag switch
+        {
+            "watcher" => "Code watcher",
+            "activity" => "Activity",
+            "settings" => "Settings",
+            _ => "Assistant"
+        };
     }
 
-    private void OpenSettings_Click(object sender, RoutedEventArgs e) => Shell.SelectedItem = Shell.FooterMenuItems[0];
+    private void OpenSettings_Click(object sender, RoutedEventArgs e) => NavigateTo("settings");
+
+    private void InspectorSpeakToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        SpeakToggle.IsOn = InspectorSpeakToggle.IsOn;
+        SettingsSpeakToggle.IsOn = InspectorSpeakToggle.IsOn;
+    }
+
+    private void SetLifecycleState(string state, string label, string detail)
+    {
+        AssistantStateText.Text = label;
+        AssistantStateDetail.Text = detail;
+        VisualStateManager.GoToState(this, state, true);
+    }
 
     private async void SendButton_Click(object sender, RoutedEventArgs e) => await SendPromptAsync();
 
@@ -100,6 +132,7 @@ public sealed partial class MainPage : Page
         Messages.Add(new AssistantMessage("Bryce", prompt, DateTimeOffset.Now));
         AssistantStatus.Title = "Working";
         AssistantStatus.Message = "Sentry is preparing a response.";
+        SetLifecycleState("Working", "RUNNING", "Processing work order");
         SendButton.IsEnabled = false;
         try
         {
@@ -109,6 +142,7 @@ public sealed partial class MainPage : Page
             AssistantStatus.Severity = InfoBarSeverity.Success;
             AssistantStatus.Title = "Resolved";
             AssistantStatus.Message = "Response ready.";
+            SetLifecycleState("Resolved", "RESOLVED", "Evidence and response ready");
             ActivityLog.Insert(0, $"{DateTime.Now:t} Assistant response resolved.");
             if (SpeakToggle.IsOn)
             {
@@ -121,6 +155,7 @@ public sealed partial class MainPage : Page
             AssistantStatus.Severity = InfoBarSeverity.Error;
             AssistantStatus.Title = "Assistant unavailable";
             AssistantStatus.Message = exception.Message;
+            SetLifecycleState("Faulted", "FAULT", "Assistant connection unavailable");
         }
         finally
         {
@@ -151,6 +186,7 @@ public sealed partial class MainPage : Page
                 AssistantStatus.Severity = InfoBarSeverity.Warning;
                 AssistantStatus.Title = "Listening";
                 AssistantStatus.Message = "Speak naturally, then press Stop and transcribe.";
+                SetLifecycleState("NeedsInput", "LISTENING", "Push-to-talk is active");
                 return;
             }
 
@@ -165,12 +201,14 @@ public sealed partial class MainPage : Page
             AssistantStatus.Severity = InfoBarSeverity.Informational;
             AssistantStatus.Title = "Voice reply ready";
             AssistantStatus.Message = "Review the message, then press Send.";
+            SetLifecycleState("NeedsInput", "NEEDS INPUT", "Review transcription before sending");
         }
         catch (Exception exception)
         {
             AssistantStatus.Severity = InfoBarSeverity.Error;
             AssistantStatus.Title = "Microphone unavailable";
             AssistantStatus.Message = exception.Message;
+            SetLifecycleState("Faulted", "FAULT", "Microphone unavailable");
         }
         finally
         {
@@ -262,6 +300,7 @@ public sealed partial class MainPage : Page
         if (!string.IsNullOrWhiteSpace(ApiKeyBox.Password)) _settings.SetApiKey(ApiKeyBox.Password);
         await _settings.SaveAsync();
         SpeakToggle.IsOn = value.SpeakResolutions;
+        InspectorSpeakToggle.IsOn = value.SpeakResolutions;
         WatchPathBox.Text = value.WatchedFolder;
         ApiKeyBox.Password = string.Empty;
         ApiKeyStatusText.Text = string.IsNullOrWhiteSpace(_settings.GetApiKey()) ? "No API key is configured." : "API key is protected for this Windows account.";
