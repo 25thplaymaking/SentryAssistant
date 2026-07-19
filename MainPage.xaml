@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="SentryAssistant.MainPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:SentryAssistant.Models"
+    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+
+    <NavigationView x:Name="Shell" PaneDisplayMode="Auto" IsSettingsVisible="False" SelectionChanged="Shell_SelectionChanged">
+        <NavigationView.MenuItems>
+            <NavigationViewItem Content="Assistant" Tag="assistant">
+                <NavigationViewItem.Icon><SymbolIcon Symbol="Message" /></NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem Content="Code watcher" Tag="watcher">
+                <NavigationViewItem.Icon><SymbolIcon Symbol="Folder" /></NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem Content="Activity" Tag="activity">
+                <NavigationViewItem.Icon><SymbolIcon Symbol="ViewAll" /></NavigationViewItem.Icon>
+            </NavigationViewItem>
+        </NavigationView.MenuItems>
+        <NavigationView.FooterMenuItems>
+            <NavigationViewItem Content="Settings" Tag="settings">
+                <NavigationViewItem.Icon><SymbolIcon Symbol="Setting" /></NavigationViewItem.Icon>
+            </NavigationViewItem>
+        </NavigationView.FooterMenuItems>
+
+        <Grid>
+            <Grid x:Name="AssistantPage" Padding="28,24">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid ColumnSpacing="18">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Image Source="Assets/Sentry.png" Width="76" Height="82" Stretch="Uniform" AutomationProperties.Name="Sentry avatar" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="3">
+                        <TextBlock Text="Sentry" Style="{StaticResource TitleTextBlockStyle}" />
+                        <TextBlock Text="Personal assistant and code watcher" Opacity="0.72" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" VerticalAlignment="Center" Orientation="Horizontal" Spacing="10">
+                        <ToggleSwitch x:Name="SpeakToggle" Header="Spoken replies" AutomationProperties.Name="Speak assistant replies" />
+                        <Button Content="Settings" Click="OpenSettings_Click" />
+                    </StackPanel>
+                </Grid>
+
+                <InfoBar x:Name="AssistantStatus" Grid.Row="1" Margin="0,16,0,12" IsOpen="True" Severity="Informational" Title="Ready" Message="Ask Sentry a question or use the microphone." />
+
+                <ListView x:Name="ConversationList" Grid.Row="2" ItemsSource="{x:Bind Messages}" SelectionMode="None">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="models:AssistantMessage">
+                            <Grid Padding="4,10" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="92" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{x:Bind Speaker}" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text="{x:Bind Text}" TextWrapping="WrapWholeWords" IsTextSelectionEnabled="True" />
+                                <TextBlock Grid.Column="2" Text="{x:Bind DisplayTime}" Opacity="0.55" FontSize="12" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <CommandBar Grid.Row="3" Margin="0,14,0,0" DefaultLabelPosition="Right" IsOpen="True">
+                    <CommandBar.Content>
+                        <TextBox x:Name="PromptBox" MinWidth="360" PlaceholderText="Ask Sentry..." KeyDown="PromptBox_KeyDown" AutomationProperties.Name="Message to Sentry" />
+                    </CommandBar.Content>
+                    <CommandBar.PrimaryCommands>
+                        <AppBarButton x:Name="RecordButton" Icon="Microphone" Label="Speak" Click="RecordButton_Click" AutomationProperties.HelpText="Start or stop a voice reply" />
+                        <AppBarButton x:Name="SendButton" Icon="Send" Label="Send" Click="SendButton_Click" />
+                    </CommandBar.PrimaryCommands>
+                </CommandBar>
+            </Grid>
+
+            <Grid x:Name="WatcherPage" Visibility="Collapsed" Padding="28,24">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <TextBlock Text="Code watcher" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock Grid.Row="1" Margin="0,4,0,16" Text="Watch a working folder and keep a readable stream of changes without interrupting command runs." Opacity="0.72" />
+                <CommandBar Grid.Row="2" DefaultLabelPosition="Right" IsOpen="True">
+                    <CommandBar.Content>
+                        <TextBox x:Name="WatchPathBox" MinWidth="500" PlaceholderText="Folder to watch" AutomationProperties.Name="Code folder to watch" />
+                    </CommandBar.Content>
+                    <CommandBar.PrimaryCommands>
+                        <AppBarButton Icon="Folder" Label="Browse" Click="BrowseFolder_Click" />
+                        <AppBarButton x:Name="WatchButton" Icon="Play" Label="Start watching" Click="WatchButton_Click" />
+                    </CommandBar.PrimaryCommands>
+                </CommandBar>
+                <InfoBar x:Name="WatcherStatus" Grid.Row="3" Margin="0,14,0,10" VerticalAlignment="Top" IsOpen="True" Severity="Informational" Title="Not watching" Message="Choose a folder and start the watcher." />
+                <ListView x:Name="WatcherList" Grid.Row="3" Margin="0,82,0,0" ItemsSource="{x:Bind CodeChanges}" SelectionMode="None">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="models:CodeActivity">
+                            <Grid Padding="4,8" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="84" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{x:Bind Kind}" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text="{x:Bind Path}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="2" Text="{x:Bind DisplayTime}" Opacity="0.55" FontSize="12" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Grid>
+
+            <Grid x:Name="ActivityPage" Visibility="Collapsed" Padding="28,24">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                <TextBlock Text="Activity" Style="{StaticResource TitleTextBlockStyle}" />
+                <ListView Grid.Row="1" Margin="0,16,0,0" ItemsSource="{x:Bind ActivityLog}" SelectionMode="None" />
+            </Grid>
+
+            <ScrollViewer x:Name="SettingsPage" Visibility="Collapsed" Padding="28,24">
+                <StackPanel MaxWidth="820" HorizontalAlignment="Left" Spacing="18">
+                    <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" />
+                    <TextBlock Text="Every active Sentry control is available here; changes are stored for your Windows account." Opacity="0.72" TextWrapping="Wrap" />
+
+                    <Expander Header="Assistant" IsExpanded="True">
+                        <StackPanel Padding="0,12,0,6" Spacing="12">
+                            <TextBox x:Name="AssistantNameBox" Header="Assistant name" />
+                            <TextBox x:Name="AssistantModelBox" Header="Conversation model" />
+                            <TextBox x:Name="SummaryModelBox" Header="Summary model" />
+                            <NumberBox x:Name="SummaryWordLimitBox" Header="Maximum spoken summary words" Minimum="8" Maximum="40" SpinButtonPlacementMode="Inline" />
+                            <ToggleSwitch x:Name="BriefSummaryToggle" Header="One-sentence Jarvis summaries" />
+                        </StackPanel>
+                    </Expander>
+
+                    <Expander Header="Voice and microphone" IsExpanded="True">
+                        <StackPanel Padding="0,12,0,6" Spacing="12">
+                            <ComboBox x:Name="SpeechVoiceBox" Header="OpenAI voice" MinWidth="240">
+                                <ComboBoxItem Content="coral" /><ComboBoxItem Content="marin" /><ComboBoxItem Content="cedar" />
+                                <ComboBoxItem Content="alloy" /><ComboBoxItem Content="ash" /><ComboBoxItem Content="nova" />
+                                <ComboBoxItem Content="onyx" /><ComboBoxItem Content="sage" /><ComboBoxItem Content="shimmer" />
+                            </ComboBox>
+                            <TextBox x:Name="SpeechModelBox" Header="Speech model" />
+                            <TextBox x:Name="TranscriptionModelBox" Header="Transcription model" />
+                            <TextBox x:Name="VoiceStyleBox" Header="Voice style" AcceptsReturn="True" TextWrapping="Wrap" />
+                            <ToggleSwitch x:Name="SettingsSpeakToggle" Header="Speak assistant replies" />
+                        </StackPanel>
+                    </Expander>
+
+                    <Expander Header="OpenAI connection" IsExpanded="True">
+                        <StackPanel Padding="0,12,0,6" Spacing="12">
+                            <PasswordBox x:Name="ApiKeyBox" Header="API key" PlaceholderText="Leave blank to keep the protected key" />
+                            <TextBlock x:Name="ApiKeyStatusText" Text="Checking protected API key..." />
+                            <Button Content="Test connection" HorizontalAlignment="Left" Click="TestConnection_Click" />
+                        </StackPanel>
+                    </Expander>
+
+                    <Expander Header="Code watcher" IsExpanded="True">
+                        <StackPanel Padding="0,12,0,6" Spacing="12">
+                            <TextBox x:Name="SettingsWatchPathBox" Header="Default watched folder" />
+                            <ToggleSwitch x:Name="NotifyChangesToggle" Header="Show code change activity" />
+                        </StackPanel>
+                    </Expander>
+
+                    <Button Content="Save all settings" HorizontalAlignment="Left" Style="{StaticResource AccentButtonStyle}" Click="SaveSettings_Click" />
+                    <InfoBar x:Name="SettingsStatus" IsOpen="False" />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </NavigationView>
+</Page>

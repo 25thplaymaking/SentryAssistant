@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "SentryAssistant (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "SentryAssistant (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

@@ -1,0 +1,40 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Isolated feature worktrees
+.worktrees/
+
+# Test and publish output
+TestResults/
+coverage/
+artifacts/
+AppPackages/
+BundleArtifacts/
+*.nupkg
+*.snupkg
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+
+# Local secrets and signing material
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+appsettings.*.local.json
+local.settings.json
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Voice recordings and generated audio
+recordings/
+*.wav
+*.mp3
+*.m4a
+*.ogg
