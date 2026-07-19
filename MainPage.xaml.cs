@@ -251,22 +251,27 @@ public sealed partial class MainPage : Page
 
         if (!status.Runtime.IsHealthy)
         {
-            SetSetupStep(SetupStepId.VerifyRuntime, SetupStepState.Failed, status.Runtime.Detail);
+            var unreachable = new RuntimeVerification(
+                RuntimeCheck.Unreachable, status.Runtime.Detail);
+            SetSetupStep(SetupStepId.VerifyRuntime, unreachable.State, unreachable.Detail);
             return;
         }
 
-        // Healthy is not the same as useful: report the missing-model case here
-        // rather than declaring success and letting the first question fail.
-        var (_, snapshot) = await _gateway.GetHermesAdminAsync();
-        if (snapshot is { CanAnswer: false })
+        // Healthy is not the same as useful: a runtime can answer every health
+        // probe with no model behind it. Asking costs an administrator call,
+        // which not every account can make — and a check that could not run is
+        // reported as exactly that rather than as a pass.
+        var (access, snapshot) = await _gateway.GetHermesAdminAsync();
+
+        var outcome = (access, snapshot) switch
         {
-            SetSetupStep(
-                SetupStepId.VerifyRuntime, SetupStepState.Failed,
-                "Runtime is reachable but has no inference provider, so it cannot answer yet.");
-            return;
-        }
+            (SentryGatewayClient.AdminAccess.Granted, { CanAnswer: true }) => RuntimeCheck.Confirmed,
+            (SentryGatewayClient.AdminAccess.Granted, { CanAnswer: false }) => RuntimeCheck.NoProvider,
+            _ => RuntimeCheck.Unconfirmed
+        };
 
-        SetSetupStep(SetupStepId.VerifyRuntime, SetupStepState.Done, status.Runtime.Detail);
+        var verification = new RuntimeVerification(outcome, status.Runtime.Detail);
+        SetSetupStep(SetupStepId.VerifyRuntime, verification.State, verification.Detail);
         await RefreshGatewayStatusAsync();
     }
 

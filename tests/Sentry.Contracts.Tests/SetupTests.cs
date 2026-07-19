@@ -129,6 +129,74 @@ public class SetupTests
             () => SetupProgress.Initial().With((SetupStepId)99, SetupStepState.Done));
     }
 
+    // --- verifying the runtime ----------------------------------------------
+
+    [Fact]
+    public void AConfirmedRuntimeCompletesTheStep()
+    {
+        var verification = new RuntimeVerification(RuntimeCheck.Confirmed, "hermes 0.18.2");
+
+        Assert.Equal(SetupStepState.Done, verification.State);
+        Assert.True(verification.IsConfirmed);
+        Assert.Contains("confirmed able to answer", verification.Detail);
+    }
+
+    // A runtime can pass every health check and still have no model behind it,
+    // which only shows up when the first question fails.
+    [Fact]
+    public void ARuntimeWithNoProviderFailsAndNamesWhy()
+    {
+        var verification = new RuntimeVerification(RuntimeCheck.NoProvider, "hermes 0.18.2");
+
+        Assert.Equal(SetupStepState.Failed, verification.State);
+        Assert.False(verification.IsConfirmed);
+        Assert.Contains("no inference provider", verification.Detail);
+    }
+
+    [Fact]
+    public void AnUnreachableRuntimeFails()
+    {
+        var verification = new RuntimeVerification(RuntimeCheck.Unreachable, "Gateway unreachable");
+
+        Assert.Equal(SetupStepState.Failed, verification.State);
+        Assert.False(verification.IsConfirmed);
+    }
+
+    // The bug this replaces: a non-administrator got no snapshot back, the check
+    // fell through, and the step reported Done as though something had verified
+    // the runtime could answer. Setup may still finish — there is nothing more
+    // this person can do — but it must not imply a check that never ran.
+    [Fact]
+    public void AnUnconfirmableRuntimeCompletesButSaysItWasNotConfirmed()
+    {
+        var verification = new RuntimeVerification(RuntimeCheck.Unconfirmed, "hermes 0.18.2");
+
+        Assert.Equal(SetupStepState.Done, verification.State);
+        Assert.False(verification.IsConfirmed);
+        Assert.Contains("not confirmed", verification.Detail);
+        Assert.Contains("administrator", verification.Detail);
+    }
+
+    [Fact]
+    public void AnUnconfirmedRuntimeNeverClaimsItCanAnswer()
+    {
+        var unconfirmed = new RuntimeVerification(RuntimeCheck.Unconfirmed, "hermes 0.18.2");
+        var confirmed = new RuntimeVerification(RuntimeCheck.Confirmed, "hermes 0.18.2");
+
+        Assert.DoesNotContain("confirmed able to answer", unconfirmed.Detail);
+        Assert.Contains("confirmed able to answer", confirmed.Detail);
+        Assert.NotEqual(confirmed.Detail, unconfirmed.Detail);
+    }
+
+    [Fact]
+    public void EveryOutcomeProducesADetailWorthReading()
+    {
+        foreach (var outcome in Enum.GetValues<RuntimeCheck>())
+        {
+            Assert.NotEmpty(new RuntimeVerification(outcome).Detail);
+        }
+    }
+
     [Fact]
     public void ProgressIsImmutable()
     {

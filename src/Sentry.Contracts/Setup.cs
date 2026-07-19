@@ -52,6 +52,73 @@ public sealed record SetupStep(
 }
 
 /// <summary>
+/// What the runtime check was able to establish.
+///
+/// The fourth case is the one that matters: a non-administrator can see that the
+/// runtime is reachable but cannot ask whether it has a model behind it. That is
+/// not the same as confirming it works, and must not be reported as though it
+/// were.
+/// </summary>
+public enum RuntimeCheck
+{
+    /// <summary>The runtime did not answer at all.</summary>
+    Unreachable,
+
+    /// <summary>Reachable, and confirmed able to answer.</summary>
+    Confirmed,
+
+    /// <summary>Reachable, and confirmed to have no inference provider.</summary>
+    NoProvider,
+
+    /// <summary>
+    /// Reachable, but whether it can answer could not be established — the
+    /// capability probe needs administrator access.
+    /// </summary>
+    Unconfirmed
+}
+
+/// <summary>
+/// The outcome of verifying the runtime, and how the walkthrough should report
+/// it.
+/// </summary>
+public sealed record RuntimeVerification(RuntimeCheck Outcome, string RuntimeDetail = "")
+{
+    /// <summary>Whether the runtime was positively established as able to answer.</summary>
+    public bool IsConfirmed => Outcome is RuntimeCheck.Confirmed;
+
+    public SetupStepState State => Outcome switch
+    {
+        RuntimeCheck.Unreachable => SetupStepState.Failed,
+        RuntimeCheck.NoProvider => SetupStepState.Failed,
+
+        // Reachable and unverifiable still lets setup finish — there is nothing
+        // more this person can do — but the detail says so plainly.
+        _ => SetupStepState.Done
+    };
+
+    public string Detail => Outcome switch
+    {
+        RuntimeCheck.Unreachable => string.IsNullOrWhiteSpace(RuntimeDetail)
+            ? "The runtime did not answer."
+            : RuntimeDetail,
+
+        RuntimeCheck.NoProvider =>
+            "Reachable, but it has no inference provider configured, so it cannot "
+            + "answer yet. Set a provider key on the gateway.",
+
+        RuntimeCheck.Confirmed => string.IsNullOrWhiteSpace(RuntimeDetail)
+            ? "Reachable and able to answer."
+            : $"{RuntimeDetail} — confirmed able to answer.",
+
+        _ => string.IsNullOrWhiteSpace(RuntimeDetail)
+            ? "Reachable. Could not confirm it can answer: that check needs an "
+              + "administrator account."
+            : $"{RuntimeDetail} — reachable, but whether it can answer was not "
+              + "confirmed: that check needs an administrator account."
+    };
+}
+
+/// <summary>
 /// The walkthrough.
 ///
 /// Steps are strictly ordered and each unlocks the next, because attempting them
