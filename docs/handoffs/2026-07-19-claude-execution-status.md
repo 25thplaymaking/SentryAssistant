@@ -30,12 +30,15 @@ Real-window inspection found four defects a green build had hidden:
 All four are fixed and re-verified.
 
 **Evidence:** 45/45 tests pass. Build is 0 warnings / 0 errors. Packaged window
-inspected at 1360×860, 900×760, 700×700 in dark and light.
+inspected at 1360×860, 900×760, 700×700 in dark, light, and Windows high
+contrast.
 
-**Not verified:** Windows high contrast. Forcing it system-wide risked leaving
-the machine in high-contrast mode if the session was interrupted. The
-`HighContrast` theme dictionary uses `SystemColor*` resources, which is the
-correct implementation, but it has not been seen running.
+High contrast was verified by enabling it through `SPI_SETHIGHCONTRAST`,
+capturing, and restoring inside a single process, so there was no interval in
+which a dropped connection could have left the machine switched. It renders
+correctly: system colours throughout, black surfaces, white text, visible
+borders, selected state using the system Highlight colour, and caption buttons in
+the system high-contrast palette. The `SystemColor*` theme dictionary works.
 
 ---
 
