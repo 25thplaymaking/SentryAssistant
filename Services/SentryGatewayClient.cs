@@ -54,8 +54,31 @@ public sealed class SentryGatewayClient : IDisposable
             _client.BaseAddress = new Uri(baseUrl!.TrimEnd('/') + "/");
         }
 
-        // Status is decoration; it must never make the UI feel stuck.
-        _client.Timeout = TimeSpan.FromSeconds(6);
+        // Deadlines are set per call, not here.
+        //
+        // HttpClient.Timeout applies to every request and is not overridden by a
+        // CancellationToken: a six-second client with a forty-five-second token
+        // still aborts at six. The admin endpoint probes the runtime for a live
+        // model and takes about eight, so it failed every single time and was
+        // reported as an unreachable gateway.
+        _client.Timeout = Timeout.InfiniteTimeSpan;
+    }
+
+    /// <summary>Status polling. Decoration — it must never make the UI feel stuck.</summary>
+    private static readonly TimeSpan StatusBudget = TimeSpan.FromSeconds(6);
+
+    /// <summary>Enrolment and token refresh. A person is waiting on these.</summary>
+    private static readonly TimeSpan AuthBudget = TimeSpan.FromSeconds(20);
+
+    /// <summary>The admin snapshot, which probes the runtime for a live model.</summary>
+    private static readonly TimeSpan AdminBudget = TimeSpan.FromSeconds(45);
+
+    private static CancellationTokenSource Deadline(
+        TimeSpan budget, CancellationToken cancellationToken)
+    {
+        var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        source.CancelAfter(budget);
+        return source;
     }
 
     public bool IsConfigured => _configured;
@@ -79,9 +102,10 @@ public sealed class SentryGatewayClient : IDisposable
 
         try
         {
-            using var response = await _client.GetAsync("health/ready", cancellationToken);
+            using var deadline = Deadline(StatusBudget, cancellationToken);
+            using var response = await _client.GetAsync("health/ready", deadline.Token);
             var payload = await response.Content.ReadFromJsonAsync<ReadyResponse>(
-                Json, cancellationToken);
+                Json, deadline.Token);
 
             if (payload is null)
             {
@@ -134,11 +158,12 @@ public sealed class SentryGatewayClient : IDisposable
 
         try
         {
+            using var deadline = Deadline(AuthBudget, cancellationToken);
             using var response = await _client.PostAsJsonAsync(
                 "api/auth/enroll/complete",
                 new { code, device_name = deviceName },
                 Json,
-                cancellationToken);
+                deadline.Token);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -147,7 +172,7 @@ public sealed class SentryGatewayClient : IDisposable
                     : $"Gateway refused enrolment ({(int)response.StatusCode}).");
             }
 
-            var pair = await response.Content.ReadFromJsonAsync<TokenPair>(Json, cancellationToken);
+            var pair = await response.Content.ReadFromJsonAsync<TokenPair>(Json, deadline.Token);
             if (pair is null || string.IsNullOrWhiteSpace(pair.AccessToken))
             {
                 return (false, "Gateway returned no credentials.");
@@ -201,11 +226,12 @@ public sealed class SentryGatewayClient : IDisposable
     {
         try
         {
+            using var deadline = Deadline(AuthBudget, cancellationToken);
             using var response = await _client.PostAsJsonAsync(
                 "api/auth/refresh",
                 new { refresh_token = refreshToken },
                 Json,
-                cancellationToken);
+                deadline.Token);
 
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
@@ -218,7 +244,7 @@ public sealed class SentryGatewayClient : IDisposable
                 // retired or expired token. That distinction is the difference
                 // between "an administrator did this" and "this simply lapsed",
                 // so it is worth carrying through to the screen.
-                var reason = await ReadDetailAsync(response, cancellationToken);
+                var reason = await ReadDetailAsync(response, deadline.Token);
                 return new SessionRestore(
                     SessionRestoreOutcome.Revoked,
                     string.IsNullOrWhiteSpace(reason)
@@ -233,7 +259,7 @@ public sealed class SentryGatewayClient : IDisposable
                     $"Gateway refused the credential refresh ({(int)response.StatusCode}).");
             }
 
-            var pair = await response.Content.ReadFromJsonAsync<TokenPair>(Json, cancellationToken);
+            var pair = await response.Content.ReadFromJsonAsync<TokenPair>(Json, deadline.Token);
             if (pair is null || string.IsNullOrWhiteSpace(pair.AccessToken))
             {
                 return new SessionRestore(
@@ -337,13 +363,13 @@ public sealed class SentryGatewayClient : IDisposable
 
         try
         {
-            // This endpoint probes the runtime for a live model, which is far
-            // slower than a status poll. The client-wide 6s budget times it out.
-            using var slow = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            slow.CancelAfter(TimeSpan.FromSeconds(45));
+            // This endpoint probes the runtime for a live model and measured
+            // around eight seconds against the live gateway, so it needs a far
+            // longer budget than a status poll.
+            using var deadline = Deadline(AdminBudget, cancellationToken);
 
             var response = await SendAuthorizedAsync(
-                () => new HttpRequestMessage(HttpMethod.Get, "api/admin/hermes"), slow.Token);
+                () => new HttpRequestMessage(HttpMethod.Get, "api/admin/hermes"), deadline.Token);
 
             using (response)
             {
@@ -363,7 +389,7 @@ public sealed class SentryGatewayClient : IDisposable
                 if (!response.IsSuccessStatusCode) return (AdminAccess.Unreachable, null);
 
                 var snapshot = await response.Content.ReadFromJsonAsync<HermesAdminSnapshot>(
-                    Json, slow.Token);
+                    Json, deadline.Token);
 
                 return snapshot is null
                     ? (AdminAccess.Unreachable, null)
