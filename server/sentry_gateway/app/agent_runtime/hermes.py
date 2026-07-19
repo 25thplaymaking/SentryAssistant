@@ -173,6 +173,48 @@ class HermesRuntime(AgentRuntime):
             degraded_reason=drift,
         )
 
+    @property
+    def registered_profile_count(self) -> int:
+        return len(self._instances)
+
+    async def has_inference_provider(self, profile_id: UUID) -> bool:
+        """Whether a model is configured behind this runtime.
+
+        Hermes reports a healthy API server whether or not a provider is set, so
+        health alone is misleading: the server answers, the agent cannot. This
+        sends a deliberately minimal completion and reads the failure mode rather
+        than the content, so the check costs approximately nothing when a
+        provider exists and fails fast when one does not.
+        """
+        try:
+            instance = self._instance(profile_id)
+        except UnknownProfileError:
+            return False
+
+        try:
+            response = await self._client.post(
+                instance.url("/v1/chat/completions"),
+                headers=instance.auth_header,
+                json={
+                    "model": instance.profile_name,
+                    "messages": [{"role": "user", "content": "."}],
+                    "max_tokens": 1,
+                    "stream": False,
+                },
+                timeout=20.0,
+            )
+        except httpx.HTTPError:
+            return False
+
+        if response.status_code < 400:
+            return True
+
+        # Hermes reports the missing-provider case as a 500 naming it explicitly.
+        # Any other failure is a different problem and is not reported as
+        # "no provider", so an admin is not sent chasing the wrong remedy.
+        body = response.text.lower()
+        return "no inference provider" not in body
+
     async def create_session(
         self, profile_id: UUID, scope: SessionScope
     ) -> RuntimeSession:

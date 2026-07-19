@@ -18,6 +18,7 @@ from .agent_runtime.base import AgentRuntime
 from .agent_runtime.hermes import HermesInstance, HermesRuntime
 from .auth.tokens import TokenService
 from .config import Settings, get_settings
+from .routes import admin as admin_routes
 from .routes import auth as auth_routes
 from .routes import nodes as nodes_routes
 from .routes import teams as teams_routes
@@ -96,6 +97,7 @@ app = FastAPI(
 )
 
 
+app.include_router(admin_routes.router)
 app.include_router(auth_routes.router)
 app.include_router(nodes_routes.router)
 app.include_router(teams_routes.router)
@@ -168,4 +170,5 @@ async def runtime_info() -> dict[str, Any]:
         "healthy": capabilities.is_healthy,
         "degradedReason": capabilities.degraded_reason,
     }
+
 

@@ -53,6 +53,21 @@ public sealed partial class MainPage : Page
         ActivityLog.Insert(0, "Sentry Assistant started.");
 
         _gateway = new SentryGatewayClient(_settings.Settings.GatewayUrl);
+
+        // A previously saved address means step one is already satisfied, so the
+        // walkthrough opens where the person actually is rather than at the start.
+        SetupGatewayBox.Text = _settings.Settings.GatewayUrl;
+        if (!string.IsNullOrWhiteSpace(_settings.Settings.GatewayUrl))
+        {
+            _setup = _setup.With(
+                SetupStepId.GatewayAddress, SetupStepState.Done,
+                $"Saved: {_settings.Settings.GatewayUrl}");
+        }
+
+        // Render the initial state so accessible names and enabled states match
+        // the state machine before any button is pressed.
+        RenderSetup();
+
         await RefreshGatewayStatusAsync();
     }
 
@@ -106,6 +121,216 @@ public sealed partial class MainPage : Page
     private async void RefreshStatus_Click(object sender, RoutedEventArgs e) =>
         await RefreshGatewayStatusAsync();
 
+    // --- Setup walkthrough ---------------------------------------------------
+
+    private SetupProgress _setup = SetupProgress.Initial();
+
+    /// <summary>Pushes the state machine onto the three step cards.</summary>
+    private void RenderSetup()
+    {
+        Render(SetupStepId.GatewayAddress, 1, Step1Marker, Step1State, Step1Detail, Step1Button);
+        Render(SetupStepId.EnrolDevice, 2, Step2Marker, Step2State, Step2Detail, Step2Button);
+        Render(SetupStepId.VerifyRuntime, 3, Step3Marker, Step3State, Step3Detail, Step3Button);
+
+        SetupComplete.IsOpen = _setup.IsComplete;
+        SetupSubtitle.Text = _setup.IsComplete
+            ? "This desktop is connected and enrolled."
+            : $"Step {_setup.CompletedCount + 1} of {_setup.Steps.Count}. "
+              + _setup.CurrentStep?.Description;
+
+        void Render(
+            SetupStepId id, int ordinal,
+            TextBlock marker, TextBlock state, TextBlock detail, Button action)
+        {
+            var step = _setup[id];
+            marker.Text = step.Marker(ordinal);
+            state.Text = step.State.ToString().ToUpperInvariant();
+            state.Foreground = ToneBrush(step.Tone);
+            detail.Text = step.Detail;
+            detail.Foreground = ToneBrush(
+                step.State is SetupStepState.Failed ? PresenceTone.Critical : PresenceTone.Neutral);
+
+            // A blocked or in-flight step is disabled rather than hidden, so the
+            // shape of the walkthrough stays visible throughout.
+            action.IsEnabled = step.CanAttempt;
+            AutomationProperties.SetName(
+                action, $"{step.Title}. {step.State}. {step.Detail}");
+        }
+    }
+
+    private void SetSetupStep(SetupStepId id, SetupStepState state, string detail = "")
+    {
+        _setup = _setup.With(id, state, detail);
+        RenderSetup();
+    }
+
+    private async void SetupStep1_Click(object sender, RoutedEventArgs e)
+    {
+        var address = SetupGatewayBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            SetSetupStep(SetupStepId.GatewayAddress, SetupStepState.Failed, "Enter a gateway address.");
+            return;
+        }
+
+        SetSetupStep(SetupStepId.GatewayAddress, SetupStepState.Working, "Contacting gateway...");
+
+        _gateway?.Dispose();
+        _gateway = new SentryGatewayClient(address);
+        var status = await _gateway.GetStatusAsync();
+
+        if (status.Gateway.IsHealthy)
+        {
+            _settings.Settings.GatewayUrl = address;
+            await _settings.SaveAsync();
+            SetSetupStep(SetupStepId.GatewayAddress, SetupStepState.Done, $"Connected to {address}.");
+            ActivityLog.Insert(0, $"{DateTime.Now:t} Gateway address saved.");
+        }
+        else
+        {
+            SetSetupStep(SetupStepId.GatewayAddress, SetupStepState.Failed, status.Gateway.Detail);
+        }
+
+        await RefreshGatewayStatusAsync();
+    }
+
+    private async void SetupStep2_Click(object sender, RoutedEventArgs e)
+    {
+        if (_gateway is null) return;
+
+        var code = SetupCodeBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            SetSetupStep(SetupStepId.EnrolDevice, SetupStepState.Failed, "Enter the enrolment code.");
+            return;
+        }
+
+        SetSetupStep(SetupStepId.EnrolDevice, SetupStepState.Working, "Redeeming code...");
+        var (success, detail) = await _gateway.EnrolAsync(code, Environment.MachineName);
+
+        SetSetupStep(
+            SetupStepId.EnrolDevice,
+            success ? SetupStepState.Done : SetupStepState.Failed,
+            detail);
+
+        if (success)
+        {
+            // The code is single use; leaving it on screen only invites a retry
+            // that is guaranteed to fail.
+            SetupCodeBox.Text = string.Empty;
+            ActivityLog.Insert(0, $"{DateTime.Now:t} Device enrolled with the gateway.");
+        }
+    }
+
+    private async void SetupStep3_Click(object sender, RoutedEventArgs e)
+    {
+        if (_gateway is null) return;
+
+        SetSetupStep(SetupStepId.VerifyRuntime, SetupStepState.Working, "Checking the runtime...");
+        var status = await _gateway.GetStatusAsync();
+
+        if (!status.Runtime.IsHealthy)
+        {
+            SetSetupStep(SetupStepId.VerifyRuntime, SetupStepState.Failed, status.Runtime.Detail);
+            return;
+        }
+
+        // Healthy is not the same as useful: report the missing-model case here
+        // rather than declaring success and letting the first question fail.
+        var (_, snapshot) = await _gateway.GetHermesAdminAsync();
+        if (snapshot is { CanAnswer: false })
+        {
+            SetSetupStep(
+                SetupStepId.VerifyRuntime, SetupStepState.Failed,
+                "Runtime is reachable but has no inference provider, so it cannot answer yet.");
+            return;
+        }
+
+        SetSetupStep(SetupStepId.VerifyRuntime, SetupStepState.Done, status.Runtime.Detail);
+        await RefreshGatewayStatusAsync();
+    }
+
+    // --- Hermes control centre -----------------------------------------------
+
+    public ObservableCollection<FindingRow> HermesFindingRows { get; } = [];
+    public ObservableCollection<CapabilityRow> HermesCapabilityRows { get; } = [];
+
+    private async Task RefreshHermesAsync()
+    {
+        HermesRefreshButton.IsEnabled = false;
+        try
+        {
+            var (access, snapshot) = _gateway is null
+                ? (SentryGatewayClient.AdminAccess.NotEnrolled, null)
+                : await _gateway.GetHermesAdminAsync();
+
+            if (snapshot is null)
+            {
+                // Name the actual cause. Reporting a timeout as a permissions
+                // problem sends someone to fix the wrong thing.
+                HermesAccessInfo.IsOpen = true;
+                HermesAccessInfo.Title = access switch
+                {
+                    SentryGatewayClient.AdminAccess.NotAdministrator => "Administrator access required",
+                    SentryGatewayClient.AdminAccess.NotEnrolled => "Setup incomplete",
+                    _ => "Gateway did not answer"
+                };
+                HermesAccessInfo.Message = access switch
+                {
+                    SentryGatewayClient.AdminAccess.NotAdministrator =>
+                        "This device is enrolled, but its owner is not an administrator.",
+                    SentryGatewayClient.AdminAccess.NotEnrolled =>
+                        "Finish the setup walkthrough to view runtime detail.",
+                    _ => "The admin endpoint did not respond. The runtime probe can be slow if the runtime is unhealthy."
+                };
+                HermesAccessInfo.Severity = access is SentryGatewayClient.AdminAccess.Unreachable
+                    ? InfoBarSeverity.Error
+                    : InfoBarSeverity.Informational;
+
+                HermesHeadline.Text = "UNAVAILABLE";
+                HermesHeadline.Foreground = ToneBrush(PresenceTone.Neutral);
+                HermesIdentity.Text = "Runtime detail not available";
+                HermesSubDetail.Text = HermesAccessInfo.Message;
+                HermesPresence.State = SentryLifecycleState.Offline;
+                HermesFindingRows.Clear();
+                HermesCapabilityRows.Clear();
+                return;
+            }
+
+            HermesAccessInfo.IsOpen = false;
+            HermesHeadline.Text = snapshot.HeadlineLabel;
+            HermesHeadline.Foreground = ToneBrush(snapshot.HeadlineTone);
+            HermesIdentity.Text = $"{snapshot.RuntimeName} {snapshot.PinnedVersion}";
+            HermesSubDetail.Text =
+                $"{snapshot.ProfilesRegistered} profile(s) registered · checked {DateTime.Now:t}";
+
+            HermesPresence.State = snapshot.FullyOperational
+                ? SentryLifecycleState.Idle
+                : SentryLifecycleState.Failed;
+
+            HermesFindingRows.Clear();
+            foreach (var finding in snapshot.Findings)
+            {
+                HermesFindingRows.Add(new FindingRow(finding));
+            }
+
+            HermesCapabilityRows.Clear();
+            var caps = snapshot.Capabilities;
+            HermesCapabilityRows.Add(new CapabilityRow("Sessions", caps.Sessions));
+            HermesCapabilityRows.Add(new CapabilityRow("Session search", caps.SessionSearch));
+            HermesCapabilityRows.Add(new CapabilityRow("Work board", caps.WorkBoard));
+            HermesCapabilityRows.Add(new CapabilityRow("Cancellation", caps.Cancellation));
+            HermesCapabilityRows.Add(new CapabilityRow("Delegation", caps.Delegation));
+        }
+        finally
+        {
+            HermesRefreshButton.IsEnabled = true;
+        }
+    }
+
+    private async void HermesRefresh_Click(object sender, RoutedEventArgs e) =>
+        await RefreshHermesAsync();
+
     private void ApplySettingsToControls()
     {
         var value = _settings.Settings;
@@ -138,18 +363,29 @@ public sealed partial class MainPage : Page
         WatcherPage.Visibility = tag == "watcher" ? Visibility.Visible : Visibility.Collapsed;
         ActivityPage.Visibility = tag == "activity" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = tag == "settings" ? Visibility.Visible : Visibility.Collapsed;
+        SetupPage.Visibility = tag == "setup" ? Visibility.Visible : Visibility.Collapsed;
+        HermesPage.Visibility = tag == "hermes" ? Visibility.Visible : Visibility.Collapsed;
 
         AssistantNavButton.IsChecked = tag == "assistant";
         WatcherNavButton.IsChecked = tag == "watcher";
         ActivityNavButton.IsChecked = tag == "activity";
         SettingsNavButton.IsChecked = tag == "settings";
+        SetupNavButton.IsChecked = tag == "setup";
+        HermesNavButton.IsChecked = tag == "hermes";
+
         CurrentPageTitle.Text = tag switch
         {
             "watcher" => "Code watcher",
             "activity" => "Activity",
             "settings" => "Settings",
+            "setup" => "Setup",
+            "hermes" => "Hermes control centre",
             _ => "Assistant"
         };
+
+        // Fetch on entry so the view is never showing a stale picture of a
+        // runtime that may have changed since the app started.
+        if (tag == "hermes") _ = RefreshHermesAsync();
     }
 
     private void OpenSettings_Click(object sender, RoutedEventArgs e) => NavigateTo("settings");

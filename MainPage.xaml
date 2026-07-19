@@ -125,6 +125,8 @@
                         <Setter Target="WatcherNavLabel.Visibility" Value="Collapsed" />
                         <Setter Target="ActivityNavLabel.Visibility" Value="Collapsed" />
                         <Setter Target="SettingsNavLabel.Visibility" Value="Collapsed" />
+                        <Setter Target="SetupNavLabel.Visibility" Value="Collapsed" />
+                        <Setter Target="HermesNavLabel.Visibility" Value="Collapsed" />
                         <Setter Target="PetStatusText.Visibility" Value="Collapsed" />
                         <Setter Target="ActiveContextPanel.Visibility" Value="Collapsed" />
                         <!-- Section eyebrows and the recent card cannot fit a 70px rail without clipping. -->
@@ -199,6 +201,23 @@
                         <StackPanel Orientation="Horizontal" Spacing="11">
                             <FontIcon Glyph="&#xE9D9;" FontSize="15" Width="16" />
                             <TextBlock x:Name="ActivityNavLabel" Text="Activity" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </ToggleButton>
+
+                    <ToggleButton x:Name="SetupNavButton" Tag="setup"
+                                  Style="{StaticResource SentryNavButtonStyle}" Click="Navigate_Click"
+                                  AutomationProperties.Name="Setup">
+                        <StackPanel Orientation="Horizontal" Spacing="11">
+                            <FontIcon Glyph="&#xE9D2;" FontSize="15" Width="16" />
+                            <TextBlock x:Name="SetupNavLabel" Text="Setup" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </ToggleButton>
+                    <ToggleButton x:Name="HermesNavButton" Tag="hermes"
+                                  Style="{StaticResource SentryNavButtonStyle}" Click="Navigate_Click"
+                                  AutomationProperties.Name="Hermes control centre">
+                        <StackPanel Orientation="Horizontal" Spacing="11">
+                            <FontIcon Glyph="&#xE950;" FontSize="15" Width="16" />
+                            <TextBlock x:Name="HermesNavLabel" Text="Hermes" VerticalAlignment="Center" />
                         </StackPanel>
                     </ToggleButton>
 
@@ -349,6 +368,210 @@
                         </ListView>
                     </Grid>
                 </Grid>
+
+                <!--
+                    Setup walkthrough. Strictly ordered steps, each unlocking the
+                    next, driven by the tested SetupProgress state machine.
+                -->
+                <ScrollViewer x:Name="SetupPage" Visibility="Collapsed" Padding="28,24">
+                    <StackPanel MaxWidth="720" HorizontalAlignment="Left" Spacing="6">
+                        <TextBlock Text="Set up Sentry" Style="{StaticResource SentryPageTitleStyle}" />
+                        <TextBlock x:Name="SetupSubtitle" Margin="0,4,0,18"
+                                   Text="Three steps to connect this desktop to your control plane."
+                                   Foreground="{ThemeResource SentryTextSecondaryBrush}" TextWrapping="Wrap" />
+
+                        <!-- Step 1 -->
+                        <Border x:Name="Step1Card" Padding="16" CornerRadius="12" Margin="0,0,0,10"
+                                Background="{ThemeResource SentrySurfaceBrush}"
+                                BorderBrush="{ThemeResource SentryBorderBrush}" BorderThickness="1">
+                            <Grid ColumnSpacing="14">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Border Width="24" Height="24" CornerRadius="12" VerticalAlignment="Top"
+                                        Background="{ThemeResource SentryAccentMutedBrush}">
+                                    <TextBlock x:Name="Step1Marker" Text="1" FontSize="12" FontWeight="SemiBold"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <StackPanel Grid.Column="1" Spacing="8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="Connect to the gateway" FontWeight="SemiBold" />
+                                        <TextBlock x:Name="Step1State" Grid.Column="1" Text="READY"
+                                                   Style="{StaticResource SentryMonoMetaTextStyle}" />
+                                    </Grid>
+                                    <TextBlock Text="Point Sentry at your control plane and confirm it answers."
+                                               Foreground="{ThemeResource SentryTextSecondaryBrush}" TextWrapping="Wrap" FontSize="12" />
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBox x:Name="SetupGatewayBox" PlaceholderText="http://localhost:8090"
+                                                 Style="{StaticResource SentryTextBoxStyle}"
+                                                 AutomationProperties.Name="Gateway address" />
+                                        <Button x:Name="Step1Button" Grid.Column="1" Content="Test" MinWidth="80"
+                                                Style="{StaticResource SentryPrimaryButtonStyle}" Click="SetupStep1_Click" />
+                                    </Grid>
+                                    <TextBlock x:Name="Step1Detail" Text="" TextWrapping="Wrap"
+                                               Style="{StaticResource SentryMonoMetaTextStyle}" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Step 2 -->
+                        <Border x:Name="Step2Card" Padding="16" CornerRadius="12" Margin="0,0,0,10"
+                                Background="{ThemeResource SentrySurfaceBrush}"
+                                BorderBrush="{ThemeResource SentryBorderBrush}" BorderThickness="1">
+                            <Grid ColumnSpacing="14">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Border Width="24" Height="24" CornerRadius="12" VerticalAlignment="Top"
+                                        Background="{ThemeResource SentryNavSelectedBrush}">
+                                    <TextBlock x:Name="Step2Marker" Text="2" FontSize="12" FontWeight="SemiBold"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <StackPanel Grid.Column="1" Spacing="8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="Enrol this device" FontWeight="SemiBold" />
+                                        <TextBlock x:Name="Step2State" Grid.Column="1" Text="BLOCKED"
+                                                   Style="{StaticResource SentryMonoMetaTextStyle}" />
+                                    </Grid>
+                                    <TextBlock Text="Redeem a one-time code so this desktop gets its own revocable credentials."
+                                               Foreground="{ThemeResource SentryTextSecondaryBrush}" TextWrapping="Wrap" FontSize="12" />
+                                    <TextBlock Style="{StaticResource SentryMonoMetaTextStyle}" TextWrapping="Wrap"
+                                               Text="Generate one on the control plane: scripts/bootstrap_device.py --display-name &quot;Bryce&quot; --device-kind desktop" />
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBox x:Name="SetupCodeBox" PlaceholderText="XXXX-XXXX-XXXX"
+                                                 Style="{StaticResource SentryTextBoxStyle}"
+                                                 AutomationProperties.Name="Enrolment code" />
+                                        <Button x:Name="Step2Button" Grid.Column="1" Content="Enrol" MinWidth="80"
+                                                IsEnabled="False" Style="{StaticResource SentryPrimaryButtonStyle}"
+                                                Click="SetupStep2_Click" />
+                                    </Grid>
+                                    <TextBlock x:Name="Step2Detail" Text="" TextWrapping="Wrap"
+                                               Style="{StaticResource SentryMonoMetaTextStyle}" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Step 3 -->
+                        <Border x:Name="Step3Card" Padding="16" CornerRadius="12" Margin="0,0,0,10"
+                                Background="{ThemeResource SentrySurfaceBrush}"
+                                BorderBrush="{ThemeResource SentryBorderBrush}" BorderThickness="1">
+                            <Grid ColumnSpacing="14">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Border Width="24" Height="24" CornerRadius="12" VerticalAlignment="Top"
+                                        Background="{ThemeResource SentryNavSelectedBrush}">
+                                    <TextBlock x:Name="Step3Marker" Text="3" FontSize="12" FontWeight="SemiBold"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <StackPanel Grid.Column="1" Spacing="8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="Verify the runtime" FontWeight="SemiBold" />
+                                        <TextBlock x:Name="Step3State" Grid.Column="1" Text="BLOCKED"
+                                                   Style="{StaticResource SentryMonoMetaTextStyle}" />
+                                    </Grid>
+                                    <TextBlock Text="Check that the agent runtime is reachable and able to answer."
+                                               Foreground="{ThemeResource SentryTextSecondaryBrush}" TextWrapping="Wrap" FontSize="12" />
+                                    <Button x:Name="Step3Button" Content="Verify" MinWidth="80" HorizontalAlignment="Left"
+                                            IsEnabled="False" Style="{StaticResource SentryPrimaryButtonStyle}"
+                                            Click="SetupStep3_Click" />
+                                    <TextBlock x:Name="Step3Detail" Text="" TextWrapping="Wrap"
+                                               Style="{StaticResource SentryMonoMetaTextStyle}" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <InfoBar x:Name="SetupComplete" IsOpen="False" IsClosable="False" Severity="Success"
+                                 Title="Setup complete" Message="This desktop is connected and enrolled." />
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!--
+                    Hermes control centre. Leads with whether the runtime can
+                    actually answer, because a healthy runtime with no model
+                    looks fine everywhere else.
+                -->
+                <ScrollViewer x:Name="HermesPage" Visibility="Collapsed" Padding="28,24">
+                    <StackPanel MaxWidth="760" HorizontalAlignment="Left" Spacing="16">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Hermes control centre" Style="{StaticResource SentryPageTitleStyle}" />
+                                <TextBlock Text="Administrator view of the agent runtime."
+                                           Foreground="{ThemeResource SentryTextSecondaryBrush}" />
+                            </StackPanel>
+                            <Button x:Name="HermesRefreshButton" Grid.Column="1" VerticalAlignment="Top"
+                                    Style="{StaticResource SentrySurfaceButtonStyle}" Click="HermesRefresh_Click"
+                                    AutomationProperties.Name="Refresh runtime status">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE72C;" FontSize="12" />
+                                    <TextBlock Text="Refresh" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <!-- Headline: operational, or the specific reason it is not. -->
+                        <Border x:Name="HermesHeadlineCard" Padding="16" CornerRadius="12"
+                                Background="{ThemeResource SentrySurfaceBrush}"
+                                BorderBrush="{ThemeResource SentryBorderStrongBrush}" BorderThickness="1">
+                            <Grid ColumnSpacing="14">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <controls:SentryPresenceView x:Name="HermesPresence" VerticalAlignment="Center" />
+                                <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                                    <TextBlock x:Name="HermesHeadline" Text="NOT CHECKED"
+                                               Style="{StaticResource SentryEyebrowTextStyle}" />
+                                    <TextBlock x:Name="HermesIdentity" Text="Runtime status unknown" FontSize="14" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="HermesSubDetail" Text="Connect and enrol to view runtime detail."
+                                               Style="{StaticResource SentryMonoMetaTextStyle}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="FINDINGS" Style="{StaticResource SentryEyebrowTextStyle}" />
+                            <ItemsControl x:Name="HermesFindings" ItemsSource="{x:Bind HermesFindingRows}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="models:FindingRow">
+                                        <Border Margin="0,0,0,8" Padding="13,11" CornerRadius="10"
+                                                Background="{ThemeResource SentrySurfaceBrush}"
+                                                BorderBrush="{ThemeResource SentryBorderBrush}" BorderThickness="1">
+                                            <Grid ColumnSpacing="11">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="3" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <Border Width="3" CornerRadius="2" Background="{x:Bind ToneBrush}" />
+                                                <StackPanel Grid.Column="1" Spacing="5">
+                                                    <TextBlock Text="{x:Bind SeverityLabel}" Style="{StaticResource SentryEyebrowTextStyle}" />
+                                                    <TextBlock Text="{x:Bind Summary}" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{x:Bind Remedy}" TextWrapping="Wrap"
+                                                               Visibility="{x:Bind RemedyVisibility}"
+                                                               Style="{StaticResource SentryMonoMetaTextStyle}" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <StackPanel Spacing="7">
+                            <TextBlock Text="CAPABILITIES" Style="{StaticResource SentryEyebrowTextStyle}" />
+                            <ItemsControl x:Name="HermesCapabilities" ItemsSource="{x:Bind HermesCapabilityRows}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="models:CapabilityRow">
+                                        <Grid ColumnSpacing="8" Margin="0,0,0,4">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="{x:Bind Name}" />
+                                            <TextBlock Grid.Column="1" Text="{x:Bind Label}" Foreground="{x:Bind ToneBrush}"
+                                                       Style="{StaticResource SentryMonoMetaTextStyle}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <InfoBar x:Name="HermesAccessInfo" IsOpen="False" IsClosable="False" Severity="Informational"
+                                 Title="Administrator access required"
+                                 Message="This view needs an enrolled device belonging to an administrator." />
+                    </StackPanel>
+                </ScrollViewer>
 
                 <Grid x:Name="ActivityPage" Visibility="Collapsed" Padding="28,24">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
@@ -526,3 +749,4 @@
         </Border>
     </Grid>
 </Page>
+

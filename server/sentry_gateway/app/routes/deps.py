@@ -71,6 +71,36 @@ def require_caller(
         ) from exc
 
 
+async def require_admin(
+    request: Request, caller: Caller = Depends(require_caller)
+) -> Caller:
+    """Admin-only routes.
+
+    Administrator status is read from the database on every request rather than
+    carried in the token, so revoking it takes effect immediately instead of at
+    the next token expiry.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is unavailable.",
+        )
+
+    async with pool.acquire() as conn:
+        is_admin = await conn.fetchval(
+            "SELECT is_admin FROM users WHERE id = $1 AND disabled_at IS NULL",
+            caller.user_id,
+        )
+
+    if not is_admin:
+        # 404 rather than 403: a non-admin should not learn that an admin
+        # surface exists at this path.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+
+    return caller
+
+
 def require_node(
     authorization: str | None = Header(default=None),
     tokens: TokenService = Depends(get_token_service),

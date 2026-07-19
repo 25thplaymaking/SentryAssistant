@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Sentry.Contracts;
 
 namespace SentryAssistant.Services;
@@ -97,6 +98,108 @@ public sealed class SentryGatewayClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// Redeem a one-time enrolment code. Returns the failure reason rather than
+    /// throwing, because every failure here is something the person can act on.
+    /// </summary>
+    public async Task<(bool Success, string Detail)> EnrolAsync(
+        string code, string deviceName, CancellationToken cancellationToken = default)
+    {
+        if (!_configured) return (false, "Set a gateway address first.");
+
+        try
+        {
+            using var response = await _client.PostAsJsonAsync(
+                "api/auth/enroll/complete",
+                new { code, device_name = deviceName },
+                Json,
+                cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return (false, response.StatusCode == System.Net.HttpStatusCode.BadRequest
+                    ? "That code is invalid or has expired."
+                    : $"Gateway refused enrolment ({(int)response.StatusCode}).");
+            }
+
+            var pair = await response.Content.ReadFromJsonAsync<TokenPair>(Json, cancellationToken);
+            if (pair is null || string.IsNullOrWhiteSpace(pair.AccessToken))
+            {
+                return (false, "Gateway returned no credentials.");
+            }
+
+            _accessToken = pair.AccessToken;
+            return (true, $"Enrolled as device {pair.DeviceId}.");
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+            return (false, "Gateway unreachable.");
+        }
+    }
+
+    /// <summary>Why an admin snapshot could not be produced.</summary>
+    public enum AdminAccess
+    {
+        Granted,
+        NotEnrolled,
+        NotAdministrator,
+        Unreachable
+    }
+
+    /// <summary>
+    /// Admin view of the runtime.
+    ///
+    /// Reports *why* it failed rather than collapsing every failure into "not an
+    /// administrator" — a timeout reported as a permissions problem sends someone
+    /// to fix the wrong thing.
+    /// </summary>
+    public async Task<(AdminAccess Access, HermesAdminSnapshot? Snapshot)> GetHermesAdminAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!_configured || string.IsNullOrWhiteSpace(_accessToken))
+        {
+            return (AdminAccess.NotEnrolled, null);
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "api/admin/hermes");
+            request.Headers.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _accessToken);
+
+            // This endpoint probes the runtime for a live model, which is far
+            // slower than a status poll. The client-wide 6s budget times it out.
+            using var slow = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            slow.CancelAfter(TimeSpan.FromSeconds(45));
+
+            using var response = await _client.SendAsync(request, slow.Token);
+
+            if (response.StatusCode is System.Net.HttpStatusCode.NotFound
+                or System.Net.HttpStatusCode.Forbidden)
+            {
+                return (AdminAccess.NotAdministrator, null);
+            }
+
+            if (!response.IsSuccessStatusCode) return (AdminAccess.Unreachable, null);
+
+            var snapshot = await response.Content.ReadFromJsonAsync<HermesAdminSnapshot>(
+                Json, slow.Token);
+
+            return snapshot is null
+                ? (AdminAccess.Unreachable, null)
+                : (AdminAccess.Granted, snapshot);
+        }
+        catch (Exception)
+        {
+            return (AdminAccess.Unreachable, null);
+        }
+    }
+
+    private string? _accessToken;
+
+    /// <summary>Whether this desktop currently holds device credentials.</summary>
+    public bool IsEnrolled => !string.IsNullOrWhiteSpace(_accessToken);
+
     private static GatewayStatus Offline(DateTimeOffset checkedAt, string detail) => new(
         new ComponentStatus("Gateway", ConnectionState.Offline, detail),
         new ComponentStatus("Runtime", ConnectionState.Unknown, "Gateway unreachable"),
@@ -104,6 +207,16 @@ public sealed class SentryGatewayClient : IDisposable
         checkedAt);
 
     public void Dispose() => _client.Dispose();
+
+    // The Gateway's Pydantic response models serialize snake_case, which the Web
+    // JSON defaults (camelCase) do not match. Naming each field explicitly is the
+    // same approach the node connection already uses, and keeps a rename on
+    // either side a compile-time concern rather than a silent null.
+    private sealed record TokenPair(
+        [property: JsonPropertyName("access_token")] string AccessToken,
+        [property: JsonPropertyName("refresh_token")] string RefreshToken,
+        [property: JsonPropertyName("device_id")] Guid DeviceId,
+        [property: JsonPropertyName("profile_id")] Guid ProfileId);
 
     // Mirrors the Gateway's /health/ready payload.
     private sealed record ReadyResponse(string Status, ReadyChecks? Checks);
