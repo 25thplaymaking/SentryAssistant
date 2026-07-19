@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="SentryAssistant.Controls.SentryPresenceView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    AutomationProperties.AccessibilityView="Content"
+    AutomationProperties.LiveSetting="Polite">
+
+    <!--
+        An original Sentry mark: a fixed outer perimeter, one travelling sweep that
+        reads as ongoing work, and a core that settles once on resolution. The
+        perimeter never changes size, so the badge cannot clip or shift layout as
+        state changes.
+
+        Tone and motion are separate visual state groups driven by the unit-tested
+        PresenceDescriptor, and every colour is a ThemeResource so light, dark, and
+        high-contrast follow automatically.
+    -->
+    <Grid x:Name="Root" Width="34" Height="34">
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="ToneStates">
+                <VisualState x:Name="ToneNeutral">
+                    <VisualState.Setters>
+                        <Setter Target="Core.Fill" Value="{ThemeResource SentryTextMutedBrush}" />
+                        <Setter Target="Halo.Stroke" Value="{ThemeResource SentryTextMutedBrush}" />
+                        <Setter Target="Sweep.Stroke" Value="{ThemeResource SentryTextMutedBrush}" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="TonePending">
+                    <VisualState.Setters>
+                        <Setter Target="Core.Fill" Value="{ThemeResource SentryWarningBrush}" />
+                        <Setter Target="Halo.Stroke" Value="{ThemeResource SentryWarningBrush}" />
+                        <Setter Target="Sweep.Stroke" Value="{ThemeResource SentryWarningBrush}" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="ToneAttention">
+                    <VisualState.Setters>
+                        <Setter Target="Core.Fill" Value="{ThemeResource SentryInfoBrush}" />
+                        <Setter Target="Halo.Stroke" Value="{ThemeResource SentryInfoBrush}" />
+                        <Setter Target="Sweep.Stroke" Value="{ThemeResource SentryInfoBrush}" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="TonePositive">
+                    <VisualState.Setters>
+                        <Setter Target="Core.Fill" Value="{ThemeResource SentrySuccessBrush}" />
+                        <Setter Target="Halo.Stroke" Value="{ThemeResource SentrySuccessBrush}" />
+                        <Setter Target="Sweep.Stroke" Value="{ThemeResource SentrySuccessBrush}" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="ToneCritical">
+                    <VisualState.Setters>
+                        <Setter Target="Core.Fill" Value="{ThemeResource SentryDangerBrush}" />
+                        <Setter Target="Halo.Stroke" Value="{ThemeResource SentryDangerBrush}" />
+                        <Setter Target="Sweep.Stroke" Value="{ThemeResource SentryDangerBrush}" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+
+            <!--
+                Motion is a separate axis so reduced motion can force MotionNone
+                without disturbing tone. MotionNone still shows a steady halo, so
+                the state stays legible with animations switched off.
+            -->
+            <VisualStateGroup x:Name="MotionStates">
+                <VisualState x:Name="MotionNone">
+                    <VisualState.Setters>
+                        <Setter Target="Sweep.Opacity" Value="0" />
+                        <Setter Target="Halo.Opacity" Value="0.30" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="MotionContinuous">
+                    <VisualState.Setters>
+                        <Setter Target="Sweep.Opacity" Value="1" />
+                        <Setter Target="Halo.Opacity" Value="0.22" />
+                    </VisualState.Setters>
+                    <Storyboard RepeatBehavior="Forever">
+                        <DoubleAnimation Storyboard.TargetName="SweepRotation"
+                                         Storyboard.TargetProperty="Angle"
+                                         From="0" To="360" Duration="0:0:1.6" />
+                    </Storyboard>
+                </VisualState>
+                <VisualState x:Name="MotionCompletion">
+                    <VisualState.Setters>
+                        <Setter Target="Sweep.Opacity" Value="0" />
+                    </VisualState.Setters>
+                    <Storyboard>
+                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="CoreScale" Storyboard.TargetProperty="ScaleX">
+                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="1" />
+                            <EasingDoubleKeyFrame KeyTime="0:0:0.20" Value="1.55" />
+                            <EasingDoubleKeyFrame KeyTime="0:0:0.52" Value="1">
+                                <EasingDoubleKeyFrame.EasingFunction>
+                                    <CubicEase EasingMode="EaseOut" />
+                                </EasingDoubleKeyFrame.EasingFunction>
+                            </EasingDoubleKeyFrame>
+                        </DoubleAnimationUsingKeyFrames>
+                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="CoreScale" Storyboard.TargetProperty="ScaleY">
+                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="1" />
+                            <EasingDoubleKeyFrame KeyTime="0:0:0.20" Value="1.55" />
+                            <EasingDoubleKeyFrame KeyTime="0:0:0.52" Value="1">
+                                <EasingDoubleKeyFrame.EasingFunction>
+                                    <CubicEase EasingMode="EaseOut" />
+                                </EasingDoubleKeyFrame.EasingFunction>
+                            </EasingDoubleKeyFrame>
+                        </DoubleAnimationUsingKeyFrames>
+                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Halo" Storyboard.TargetProperty="Opacity">
+                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.85" />
+                            <EasingDoubleKeyFrame KeyTime="0:0:0.60" Value="0.32" />
+                        </DoubleAnimationUsingKeyFrames>
+                    </Storyboard>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
+
+        <Ellipse x:Name="Perimeter" Width="30" Height="30"
+                 Stroke="{ThemeResource SentryBorderStrongBrush}" StrokeThickness="1" />
+
+        <Ellipse x:Name="Halo" Width="30" Height="30" Opacity="0.30"
+                 Stroke="{ThemeResource SentryTextMutedBrush}" StrokeThickness="1" />
+
+        <!-- StrokeDashArray turns a full ellipse into a single travelling arc. -->
+        <Ellipse x:Name="Sweep" Width="30" Height="30" Opacity="0"
+                 Stroke="{ThemeResource SentryTextMutedBrush}" StrokeThickness="2"
+                 StrokeDashArray="6,20" StrokeDashCap="Round"
+                 RenderTransformOrigin="0.5,0.5">
+            <Ellipse.RenderTransform>
+                <RotateTransform x:Name="SweepRotation" Angle="0" />
+            </Ellipse.RenderTransform>
+        </Ellipse>
+
+        <Ellipse x:Name="Core" Width="10" Height="10"
+                 Fill="{ThemeResource SentryTextMutedBrush}"
+                 RenderTransformOrigin="0.5,0.5">
+            <Ellipse.RenderTransform>
+                <ScaleTransform x:Name="CoreScale" ScaleX="1" ScaleY="1" />
+            </Ellipse.RenderTransform>
+        </Ellipse>
+    </Grid>
+</UserControl>

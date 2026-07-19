@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Sentry.Contracts;
 using SentryAssistant.Models;
 using SentryAssistant.Services;
 using Windows.Media.Core;
@@ -20,6 +22,7 @@ public sealed partial class MainPage : Page
     private readonly MediaPlayer _player = new();
     private OpenAIService? _openAI;
     private FileSystemWatcher? _watcher;
+    private SentryLifecycleState _lifecycleState = SentryLifecycleState.Idle;
     private readonly Dictionary<string, DateTimeOffset> _recentChanges = new(StringComparer.OrdinalIgnoreCase);
 
     public ObservableCollection<AssistantMessage> Messages { get; } = [];
@@ -39,8 +42,12 @@ public sealed partial class MainPage : Page
         _openAI = new OpenAIService(_settings);
         ApplySettingsToControls();
         NavigateTo("assistant");
-        SetLifecycleState("Idle", "READY", "Awaiting work order");
-        Messages.Add(new AssistantMessage("Sentry", "Online. I can help directly, accept a voice reply, or watch a code workspace for changes.", DateTimeOffset.Now));
+        SetLifecycleState(SentryLifecycleState.Idle);
+        Messages.Add(new AssistantMessage(
+            MessageAuthor.Sentry,
+            _settings.Settings.AssistantName,
+            "Online. I can help directly, accept a voice reply, or watch a code workspace for changes.",
+            DateTimeOffset.Now));
         ActivityLog.Insert(0, "Sentry Assistant started.");
     }
 
@@ -98,11 +105,43 @@ public sealed partial class MainPage : Page
         SettingsSpeakToggle.IsOn = InspectorSpeakToggle.IsOn;
     }
 
-    private void SetLifecycleState(string state, string label, string detail)
+    /// <summary>
+    /// Single entry point for lifecycle changes. Labels and detail text come from
+    /// the tested presence policy; callers may override detail with something more
+    /// specific but cannot invent a new state name.
+    /// </summary>
+    private void SetLifecycleState(SentryLifecycleState state, string? detail = null)
     {
-        AssistantStateText.Text = label;
-        AssistantStateDetail.Text = detail;
-        VisualStateManager.GoToState(this, state, true);
+        _lifecycleState = state;
+        Presence.State = state;
+
+        var descriptor = SentryPresence.Describe(state);
+        AssistantStateText.Text = descriptor.Label;
+        AssistantStateDetail.Text = detail ?? descriptor.Detail;
+    }
+
+    /// <summary>
+    /// Resolution-only speech. Both the user's mute toggle and the lifecycle policy
+    /// must allow it, so no command, tool, or progress event can ever reach TTS.
+    /// </summary>
+    private bool MaySpeakNow() =>
+        SpeakToggle.IsOn && SentryPresence.Describe(_lifecycleState).MaySpeak;
+
+    private void NewWorkOrder_Click(object sender, RoutedEventArgs e)
+    {
+        Messages.Clear();
+        NavigateTo("assistant");
+        SetLifecycleState(SentryLifecycleState.Idle, "New session — awaiting your first message");
+        Messages.Add(new AssistantMessage(
+            MessageAuthor.System,
+            "Sentry",
+            "New local session. Durable team work orders become available once a gateway is connected.",
+            DateTimeOffset.Now));
+        AssistantStatus.Severity = InfoBarSeverity.Informational;
+        AssistantStatus.Title = "New session";
+        AssistantStatus.Message = "Ask Sentry a question or use push-to-talk.";
+        ActivityLog.Insert(0, $"{DateTime.Now:t} Started a new local session.");
+        PromptBox.Focus(FocusState.Programmatic);
     }
 
     private async void SendButton_Click(object sender, RoutedEventArgs e) => await SendPromptAsync();
@@ -129,22 +168,26 @@ public sealed partial class MainPage : Page
 
         var prompt = PromptBox.Text.Trim();
         PromptBox.Text = string.Empty;
-        Messages.Add(new AssistantMessage("Bryce", prompt, DateTimeOffset.Now));
+        Messages.Add(new AssistantMessage(MessageAuthor.User, "Bryce", prompt, DateTimeOffset.Now));
+        AssistantStatus.Severity = InfoBarSeverity.Informational;
         AssistantStatus.Title = "Working";
         AssistantStatus.Message = "Sentry is preparing a response.";
-        SetLifecycleState("Working", "RUNNING", "Processing work order");
+        SetLifecycleState(SentryLifecycleState.Running);
         SendButton.IsEnabled = false;
         try
         {
             var response = await _openAI.AskAsync(prompt, Messages.ToList());
-            Messages.Add(new AssistantMessage(_settings.Settings.AssistantName, response, DateTimeOffset.Now));
+            Messages.Add(new AssistantMessage(
+                MessageAuthor.Sentry, _settings.Settings.AssistantName, response, DateTimeOffset.Now));
             ConversationList.ScrollIntoView(Messages[^1]);
             AssistantStatus.Severity = InfoBarSeverity.Success;
             AssistantStatus.Title = "Resolved";
             AssistantStatus.Message = "Response ready.";
-            SetLifecycleState("Resolved", "RESOLVED", "Evidence and response ready");
+            SetLifecycleState(SentryLifecycleState.Resolved);
             ActivityLog.Insert(0, $"{DateTime.Now:t} Assistant response resolved.");
-            if (SpeakToggle.IsOn)
+
+            // Speech is gated on the resolved lifecycle state, not merely on reaching this line.
+            if (MaySpeakNow())
             {
                 var spoken = await _openAI.SummarizeAsync(response);
                 await PlaySpeechAsync(spoken);
@@ -155,7 +198,7 @@ public sealed partial class MainPage : Page
             AssistantStatus.Severity = InfoBarSeverity.Error;
             AssistantStatus.Title = "Assistant unavailable";
             AssistantStatus.Message = exception.Message;
-            SetLifecycleState("Faulted", "FAULT", "Assistant connection unavailable");
+            SetLifecycleState(SentryLifecycleState.Failed, "Assistant connection unavailable");
         }
         finally
         {
@@ -182,11 +225,11 @@ public sealed partial class MainPage : Page
             {
                 _player.Pause();
                 _microphone.Start();
-                RecordButton.Label = "Stop and transcribe";
+                SetRecordButtonState(recording: true);
                 AssistantStatus.Severity = InfoBarSeverity.Warning;
                 AssistantStatus.Title = "Listening";
                 AssistantStatus.Message = "Speak naturally, then press Stop and transcribe.";
-                SetLifecycleState("NeedsInput", "LISTENING", "Push-to-talk is active");
+                SetLifecycleState(SentryLifecycleState.NeedsInput, "Push-to-talk is active");
                 return;
             }
 
@@ -201,20 +244,36 @@ public sealed partial class MainPage : Page
             AssistantStatus.Severity = InfoBarSeverity.Informational;
             AssistantStatus.Title = "Voice reply ready";
             AssistantStatus.Message = "Review the message, then press Send.";
-            SetLifecycleState("NeedsInput", "NEEDS INPUT", "Review transcription before sending");
+            SetLifecycleState(SentryLifecycleState.NeedsInput, "Review transcription before sending");
         }
         catch (Exception exception)
         {
             AssistantStatus.Severity = InfoBarSeverity.Error;
             AssistantStatus.Title = "Microphone unavailable";
             AssistantStatus.Message = exception.Message;
-            SetLifecycleState("Faulted", "FAULT", "Microphone unavailable");
+            SetLifecycleState(SentryLifecycleState.Failed, "Microphone unavailable");
         }
         finally
         {
-            if (!_microphone.IsRecording) RecordButton.Label = "Speak";
+            if (!_microphone.IsRecording) SetRecordButtonState(recording: false);
             RecordButton.IsEnabled = true;
         }
+    }
+
+    /// <summary>
+    /// Push-to-talk is a single toggle, so the glyph, tooltip, and accessible name
+    /// must all change together — a colour change alone would not be announced.
+    /// </summary>
+    private void SetRecordButtonState(bool recording)
+    {
+        //  stop,  microphone (Segoe Fluent Icons).
+        // 0xE71A stop, 0xE720 microphone (Segoe Fluent Icons).
+        RecordGlyph.Glyph = ((char)(recording ? 0xE71A : 0xE720)).ToString();
+        var name = recording ? "Stop recording and transcribe" : "Push to talk";
+        AutomationProperties.SetName(RecordButton, name);
+        ToolTipService.SetToolTip(RecordButton, recording
+            ? "Stop recording and transcribe for review."
+            : "Push to talk. Your words are transcribed for review before sending.");
     }
 
     private async void BrowseFolder_Click(object sender, RoutedEventArgs e)

@@ -4,9 +4,98 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:SentryAssistant.Models"
+    xmlns:controls="using:SentryAssistant.Controls"
     Background="{ThemeResource SentryBackgroundBrush}">
 
-    <VisualStateManager.VisualStateGroups>
+    <Page.Resources>
+        <!--
+            Distinct conversation turns. A user turn is a tight right-aligned accent
+            surface; a Sentry turn is a wider left-aligned panel with an accent spine.
+            Neither can be mistaken for the other at a glance or in high contrast.
+        -->
+        <DataTemplate x:Key="UserMessageTemplate" x:DataType="models:AssistantMessage">
+            <Grid Padding="0,5" HorizontalAlignment="Right" MaxWidth="560">
+                <Border Padding="13,10" CornerRadius="12,12,4,12"
+                        Background="{ThemeResource SentryAccentMutedBrush}"
+                        BorderBrush="{ThemeResource SentryAccentBrush}" BorderThickness="1">
+                    <StackPanel Spacing="5">
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{x:Bind Speaker}" Style="{StaticResource SentryEyebrowTextStyle}" />
+                            <TextBlock Grid.Column="1" Text="{x:Bind DisplayTime}"
+                                       Style="{StaticResource SentryMonoMetaTextStyle}" />
+                        </Grid>
+                        <TextBlock Text="{x:Bind Text}" TextWrapping="WrapWholeWords"
+                                   IsTextSelectionEnabled="True"
+                                   Foreground="{ThemeResource SentryTextPrimaryBrush}" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="SentryMessageTemplate" x:DataType="models:AssistantMessage">
+            <Grid Padding="0,5" HorizontalAlignment="Left" MaxWidth="672">
+                <Border Padding="0" CornerRadius="12,12,12,4"
+                        Background="{ThemeResource SentrySurfaceBrush}"
+                        BorderBrush="{ThemeResource SentryBorderBrush}" BorderThickness="1">
+                    <Grid ColumnSpacing="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="3" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <!-- Accent spine marks a Sentry turn without relying on colour alone. -->
+                        <Border Width="3" CornerRadius="12,0,0,4"
+                                Background="{ThemeResource SentryAccentBrush}" />
+                        <StackPanel Grid.Column="1" Padding="13,10" Spacing="5">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{x:Bind Speaker}" Style="{StaticResource SentryEyebrowTextStyle}" />
+                                <TextBlock Grid.Column="1" Text="{x:Bind DisplayTime}"
+                                           Style="{StaticResource SentryMonoMetaTextStyle}" />
+                            </Grid>
+                            <TextBlock Text="{x:Bind Text}" TextWrapping="WrapWholeWords"
+                                       IsTextSelectionEnabled="True"
+                                       Foreground="{ThemeResource SentryTextPrimaryBrush}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="SystemMessageTemplate" x:DataType="models:AssistantMessage">
+            <Grid Padding="0,7" HorizontalAlignment="Center" MaxWidth="620">
+                <TextBlock Text="{x:Bind Text}" TextWrapping="WrapWholeWords"
+                           HorizontalTextAlignment="Center"
+                           Style="{StaticResource SentryMonoMetaTextStyle}" />
+            </Grid>
+        </DataTemplate>
+
+        <controls:MessageTemplateSelector
+            x:Key="MessageTemplateSelector"
+            UserTemplate="{StaticResource UserMessageTemplate}"
+            SentryTemplate="{StaticResource SentryMessageTemplate}"
+            SystemTemplate="{StaticResource SystemMessageTemplate}" />
+    </Page.Resources>
+
+    <Grid x:Name="RootShell" Background="{ThemeResource SentryBackgroundBrush}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="RailColumn" Width="248" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition x:Name="InspectorColumn" Width="286" />
+        </Grid.ColumnDefinitions>
+
+        <!--
+            Adaptive state groups must live on the root child element. Attached to the
+            Page itself they are never evaluated, which left the rail and inspector
+            pinned at full width and clipped the canvas at narrow sizes.
+        -->
+        <VisualStateManager.VisualStateGroups>
             <VisualStateGroup x:Name="WindowWidthStates">
                 <VisualState x:Name="WideLayout">
                     <VisualState.StateTriggers><AdaptiveTrigger MinWindowWidth="1120" /></VisualState.StateTriggers>
@@ -38,65 +127,21 @@
                         <Setter Target="SettingsNavLabel.Visibility" Value="Collapsed" />
                         <Setter Target="PetStatusText.Visibility" Value="Collapsed" />
                         <Setter Target="ActiveContextPanel.Visibility" Value="Collapsed" />
+                        <!-- Section eyebrows and the recent card cannot fit a 70px rail without clipping. -->
+                        <Setter Target="WorkspaceEyebrow.Visibility" Value="Collapsed" />
+                        <Setter Target="RecentEyebrow.Visibility" Value="Collapsed" />
+                        <Setter Target="RecentWorkstreamCard.Visibility" Value="Collapsed" />
+                        <Setter Target="RailDivider.Visibility" Value="Collapsed" />
+                        <Setter Target="PetStatusBorder.Visibility" Value="Collapsed" />
                     </VisualState.Setters>
                 </VisualState>
             </VisualStateGroup>
 
-            <VisualStateGroup x:Name="AssistantLifecycleStates">
-                <VisualState x:Name="Idle">
-                    <VisualState.Setters>
-                        <Setter Target="StatusDot.Fill" Value="{ThemeResource SentryAccentBrush}" />
-                        <Setter Target="WorkingPulse.Opacity" Value="0" />
-                    </VisualState.Setters>
-                </VisualState>
-                <VisualState x:Name="Working">
-                    <VisualState.Setters>
-                        <Setter Target="StatusDot.Fill" Value="{ThemeResource SentryWarningBrush}" />
-                    </VisualState.Setters>
-                    <Storyboard RepeatBehavior="Forever" AutoReverse="True">
-                        <DoubleAnimation Storyboard.TargetName="WorkingPulse" Storyboard.TargetProperty="Opacity"
-                                         From="0.15" To="0.72" Duration="0:0:0.7" />
-                    </Storyboard>
-                </VisualState>
-                <VisualState x:Name="Resolved">
-                    <VisualState.Setters>
-                        <Setter Target="StatusDot.Fill" Value="{ThemeResource SentrySuccessBrush}" />
-                        <Setter Target="WorkingPulse.Opacity" Value="0" />
-                    </VisualState.Setters>
-                    <Storyboard>
-                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="StatusDotScale" Storyboard.TargetProperty="ScaleX">
-                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="1" />
-                            <EasingDoubleKeyFrame KeyTime="0:0:0.18" Value="1.8" />
-                            <EasingDoubleKeyFrame KeyTime="0:0:0.48" Value="1" />
-                        </DoubleAnimationUsingKeyFrames>
-                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="StatusDotScale" Storyboard.TargetProperty="ScaleY">
-                            <EasingDoubleKeyFrame KeyTime="0:0:0" Value="1" />
-                            <EasingDoubleKeyFrame KeyTime="0:0:0.18" Value="1.8" />
-                            <EasingDoubleKeyFrame KeyTime="0:0:0.48" Value="1" />
-                        </DoubleAnimationUsingKeyFrames>
-                    </Storyboard>
-                </VisualState>
-                <VisualState x:Name="NeedsInput">
-                    <VisualState.Setters>
-                        <Setter Target="StatusDot.Fill" Value="{ThemeResource SentryInfoBrush}" />
-                        <Setter Target="WorkingPulse.Opacity" Value="0.5" />
-                    </VisualState.Setters>
-                </VisualState>
-                <VisualState x:Name="Faulted">
-                    <VisualState.Setters>
-                        <Setter Target="StatusDot.Fill" Value="{ThemeResource SentryDangerBrush}" />
-                        <Setter Target="WorkingPulse.Opacity" Value="0" />
-                    </VisualState.Setters>
-                </VisualState>
-            </VisualStateGroup>
-    </VisualStateManager.VisualStateGroups>
-
-    <Grid x:Name="RootShell" Background="{ThemeResource SentryBackgroundBrush}">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition x:Name="RailColumn" Width="248" />
-            <ColumnDefinition Width="*" />
-            <ColumnDefinition x:Name="InspectorColumn" Width="286" />
-        </Grid.ColumnDefinitions>
+            <!--
+                Lifecycle visuals now live in controls:SentryPresenceView, driven by
+                the unit-tested PresenceDescriptor, so states are not restated here.
+            -->
+        </VisualStateManager.VisualStateGroups>
 
         <!-- Workstream rail: compact and task-oriented, intentionally not a stock NavigationView. -->
         <Border Grid.Column="0" Background="{ThemeResource SentryRailBrush}"
@@ -120,8 +165,10 @@
                     </StackPanel>
                 </Grid>
 
-                <Button Grid.Row="1" Margin="0,0,0,14" Height="36" HorizontalAlignment="Stretch"
-                        Style="{StaticResource SentryPrimaryButtonStyle}" AutomationProperties.Name="Create a new work order">
+                <Button x:Name="NewWorkOrderButton" Grid.Row="1" Margin="0,0,0,14" Height="36" HorizontalAlignment="Stretch"
+                        Style="{StaticResource SentryPrimaryButtonStyle}" Click="NewWorkOrder_Click"
+                        AutomationProperties.Name="Start a new work order"
+                        ToolTipService.ToolTip="Start a new local session. Durable team work orders need a connected gateway.">
                     <StackPanel Orientation="Horizontal" Spacing="9">
                         <FontIcon Glyph="&#xE710;" FontSize="13" />
                         <TextBlock x:Name="NewWorkLabel" Text="New work order" />
@@ -129,7 +176,7 @@
                 </Button>
 
                 <StackPanel Grid.Row="2" Spacing="2">
-                    <TextBlock Text="WORKSPACE" Margin="10,0,0,7" Style="{StaticResource SentryEyebrowTextStyle}" />
+                    <TextBlock x:Name="WorkspaceEyebrow" Text="WORKSPACE" Margin="10,0,0,7" Style="{StaticResource SentryEyebrowTextStyle}" />
                     <ToggleButton x:Name="AssistantNavButton" Tag="assistant" IsChecked="True"
                                   Style="{StaticResource SentryNavButtonStyle}" Click="Navigate_Click"
                                   AutomationProperties.Name="Assistant">
@@ -155,9 +202,11 @@
                         </StackPanel>
                     </ToggleButton>
 
-                    <Border Height="1" Margin="8,13,8,12" Background="{ThemeResource SentryBorderBrush}" />
-                    <TextBlock Text="RECENT" Margin="10,0,0,7" Style="{StaticResource SentryEyebrowTextStyle}" />
-                    <Border Padding="10,8" CornerRadius="10" Background="{ThemeResource SentrySurfaceBrush}">
+                    <Border x:Name="RailDivider" Height="1" Margin="8,13,8,12" Background="{ThemeResource SentryBorderBrush}" />
+                    <TextBlock x:Name="RecentEyebrow" Text="RECENT" Margin="10,0,0,7" Style="{StaticResource SentryEyebrowTextStyle}" />
+                    <!-- Collapsed in the compact rail: at 70px it degrades to "Se..." and reads as damage. -->
+                    <Border x:Name="RecentWorkstreamCard" Padding="10,8" CornerRadius="10" Background="{ThemeResource SentrySurfaceBrush}"
+                            ToolTipService.ToolTip="Sentry foundation — 25vid/sentry-foundation">
                         <StackPanel Spacing="3">
                             <TextBlock Text="Sentry foundation" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                             <TextBlock Text="25vid/sentry-foundation" Style="{StaticResource SentryMonoMetaTextStyle}" TextTrimming="CharacterEllipsis" />
@@ -174,7 +223,8 @@
                             <TextBlock x:Name="SettingsNavLabel" Text="Settings" VerticalAlignment="Center" />
                         </StackPanel>
                     </ToggleButton>
-                    <Border Padding="9,8" CornerRadius="10" BorderBrush="{ThemeResource SentryBorderBrush}" BorderThickness="1">
+                    <Border x:Name="PetStatusBorder" Padding="9,8" CornerRadius="10"
+                            BorderBrush="{ThemeResource SentryBorderBrush}" BorderThickness="1">
                         <StackPanel Orientation="Horizontal" Spacing="9">
                             <Ellipse Width="7" Height="7" Fill="{ThemeResource SentrySuccessBrush}" VerticalAlignment="Center" />
                             <TextBlock x:Name="PetStatusText" Text="Sentry pet active" Style="{StaticResource SentryMonoMetaTextStyle}" />
@@ -219,43 +269,46 @@
 
                     <ListView x:Name="ConversationList" Grid.Row="1" Margin="0,12,0,12"
                               ItemsSource="{x:Bind Messages}" SelectionMode="None"
-                              HorizontalContentAlignment="Stretch">
+                              HorizontalContentAlignment="Stretch"
+                              ItemTemplateSelector="{StaticResource MessageTemplateSelector}">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="MinHeight" Value="0" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
                         <ListView.ItemContainerTransitions>
                             <TransitionCollection><EntranceThemeTransition FromVerticalOffset="18" /></TransitionCollection>
                         </ListView.ItemContainerTransitions>
-                        <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="models:AssistantMessage">
-                                <Grid MaxWidth="672" Padding="0,6" HorizontalAlignment="Center">
-                                    <Border Padding="14,11" CornerRadius="12"
-                                            Background="{ThemeResource SentrySurfaceBrush}"
-                                            BorderBrush="{ThemeResource SentryBorderBrush}" BorderThickness="1">
-                                        <Grid RowSpacing="7">
-                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                            <Grid ColumnSpacing="10">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                <TextBlock Text="{x:Bind Speaker}" Style="{StaticResource SentryEyebrowTextStyle}" />
-                                                <TextBlock Grid.Column="1" Text="{x:Bind DisplayTime}" Style="{StaticResource SentryMonoMetaTextStyle}" />
-                                            </Grid>
-                                            <TextBlock Grid.Row="1" Text="{x:Bind Text}" TextWrapping="WrapWholeWords"
-                                                       IsTextSelectionEnabled="True" Foreground="{ThemeResource SentryTextPrimaryBrush}" />
-                                        </Grid>
-                                    </Border>
-                                </Grid>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
                     </ListView>
 
-                    <Border Grid.Row="2" MaxWidth="704" HorizontalAlignment="Center" Padding="10,8,8,8"
+                    <!--
+                        Stretch with a MaxWidth so the composer fills the reading column
+                        and stays centred. HorizontalAlignment="Center" made it collapse
+                        to the width of its own content.
+                    -->
+                    <Border Grid.Row="2" MaxWidth="704" HorizontalAlignment="Stretch" Padding="10,8,8,8"
                             CornerRadius="14" Background="{ThemeResource SentrySurfaceBrush}"
                             BorderBrush="{ThemeResource SentryBorderStrongBrush}" BorderThickness="1">
-                        <Grid ColumnSpacing="8">
+                        <Grid ColumnSpacing="6">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <TextBox x:Name="PromptBox" MinHeight="38" MaxHeight="116" PlaceholderText="Message Sentry..."
+                                     VerticalAlignment="Center" AcceptsReturn="False" TextWrapping="Wrap"
                                      KeyDown="PromptBox_KeyDown" AutomationProperties.Name="Message to Sentry"
-                                     Style="{StaticResource SentryTextBoxStyle}" BorderThickness="0" />
-                            <AppBarButton x:Name="RecordButton" Grid.Column="1" Icon="Microphone" Label="Speak"
-                                          Click="RecordButton_Click" AutomationProperties.HelpText="Start or stop a voice reply" />
-                            <AppBarButton x:Name="SendButton" Grid.Column="2" Icon="Send" Label="Send" Click="SendButton_Click" />
+                                     Style="{StaticResource SentryTextBoxStyle}" BorderThickness="0" Background="Transparent" />
+                            <Button x:Name="RecordButton" Grid.Column="1" Style="{StaticResource SentryIconButtonStyle}"
+                                    Click="RecordButton_Click" VerticalAlignment="Center"
+                                    AutomationProperties.Name="Push to talk"
+                                    ToolTipService.ToolTip="Push to talk. Your words are transcribed for review before sending.">
+                                <FontIcon x:Name="RecordGlyph" Glyph="&#xE720;" FontSize="15" />
+                            </Button>
+                            <Button x:Name="SendButton" Grid.Column="2" Style="{StaticResource SentryPrimaryButtonStyle}"
+                                    Click="SendButton_Click" VerticalAlignment="Center" Width="36" Height="36" Padding="0"
+                                    AutomationProperties.Name="Send message"
+                                    ToolTipService.ToolTip="Send (Enter)">
+                                <FontIcon Glyph="&#xE724;" FontSize="15" />
+                            </Button>
                         </Grid>
                     </Border>
                 </Grid>
@@ -380,18 +433,12 @@
                     <Border x:Name="AssistantStatePanel" Padding="12" CornerRadius="12"
                             Background="{ThemeResource SentrySurfaceBrush}" BorderBrush="{ThemeResource SentryBorderBrush}" BorderThickness="1">
                         <Grid ColumnSpacing="11">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="30" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <Grid Width="30" Height="30">
-                                <Border x:Name="WorkingPulse" Width="28" Height="28" CornerRadius="14" Opacity="0"
-                                        BorderBrush="{ThemeResource SentryWarningBrush}" BorderThickness="1" />
-                                <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="{ThemeResource SentryAccentBrush}"
-                                         RenderTransformOrigin="0.5,0.5">
-                                    <Ellipse.RenderTransform><ScaleTransform x:Name="StatusDotScale" ScaleX="1" ScaleY="1" /></Ellipse.RenderTransform>
-                                </Ellipse>
-                            </Grid>
-                            <StackPanel Grid.Column="1" Spacing="2">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <controls:SentryPresenceView x:Name="Presence" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                                 <TextBlock x:Name="AssistantStateText" Text="READY" Style="{StaticResource SentryMonoMetaTextStyle}" />
-                                <TextBlock x:Name="AssistantStateDetail" Text="Awaiting work order" FontSize="12" />
+                                <TextBlock x:Name="AssistantStateDetail" Text="Awaiting work order" FontSize="12"
+                                           TextWrapping="WrapWholeWords" Foreground="{ThemeResource SentryTextSecondaryBrush}" />
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -443,7 +490,17 @@
                         <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <TextBlock Text="On resolution" /><TextBlock Grid.Column="1" Text="1 SENTENCE" Foreground="{ThemeResource SentryAccentBrush}" Style="{StaticResource SentryMonoMetaTextStyle}" />
                         </Grid>
-                        <ToggleSwitch x:Name="InspectorSpeakToggle" Header="Voice output" Toggled="InspectorSpeakToggle_Toggled" />
+                        <!-- One-click mute. OnContent/OffContent are blank so the row keeps the panel's rhythm. -->
+                        <Grid ColumnSpacing="8" Margin="0,3,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="Voice output" VerticalAlignment="Center" />
+                            <ToggleSwitch x:Name="InspectorSpeakToggle" Grid.Column="1"
+                                          MinWidth="0" OnContent="" OffContent=""
+                                          HorizontalAlignment="Right" VerticalAlignment="Center"
+                                          Toggled="InspectorSpeakToggle_Toggled"
+                                          AutomationProperties.Name="Voice output"
+                                          ToolTipService.ToolTip="Mute or unmute the single spoken resolution sentence." />
+                        </Grid>
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>

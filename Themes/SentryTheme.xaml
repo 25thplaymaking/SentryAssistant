@@ -22,6 +22,22 @@
             <SolidColorBrush x:Key="SentryWarningBrush" Color="#FFE0B56A" />
             <SolidColorBrush x:Key="SentryDangerBrush" Color="#FFE77D70" />
             <SolidColorBrush x:Key="SentryInfoBrush" Color="#FF78A9D1" />
+
+            <!--
+                WinUI toggles default to the user's Windows accent, which reads as a
+                bright foreign colour inside Sentry's restrained palette. Bind them to
+                the Sentry accent instead. High contrast deliberately keeps the system
+                colours below.
+            -->
+            <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="#FFA9C88E" />
+            <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="#FFB8D3A0" />
+            <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="#FF97B77C" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="#FFA9C88E" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="#FFB8D3A0" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed" Color="#FF97B77C" />
+            <SolidColorBrush x:Key="ToggleSwitchKnobFillOn" Color="#FF171918" />
+            <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPointerOver" Color="#FF171918" />
+            <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPressed" Color="#FF171918" />
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="Light">
@@ -42,6 +58,16 @@
             <SolidColorBrush x:Key="SentryWarningBrush" Color="#FF94651A" />
             <SolidColorBrush x:Key="SentryDangerBrush" Color="#FFB53D31" />
             <SolidColorBrush x:Key="SentryInfoBrush" Color="#FF2B6D9E" />
+
+            <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="#FF4F782E" />
+            <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="#FF456A28" />
+            <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="#FF3C5C22" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="#FF4F782E" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="#FF456A28" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed" Color="#FF3C5C22" />
+            <SolidColorBrush x:Key="ToggleSwitchKnobFillOn" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPointerOver" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPressed" Color="#FFFFFFFF" />
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="HighContrast">
