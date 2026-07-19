@@ -19,6 +19,7 @@ from .agent_runtime.hermes import HermesInstance, HermesRuntime
 from .auth.tokens import TokenService
 from .config import Settings, get_settings
 from .routes import auth as auth_routes
+from .routes import nodes as nodes_routes
 from .routes import workorders as workorders_routes
 
 
@@ -95,6 +96,7 @@ app = FastAPI(
 
 
 app.include_router(auth_routes.router)
+app.include_router(nodes_routes.router)
 app.include_router(workorders_routes.router)
 
 
