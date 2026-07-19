@@ -1,0 +1,37 @@
+# Hermes profile configuration for the Sentry personal profile.
+#
+# Contains no secrets. Provider keys and the API server key arrive through the
+# environment from deploy/linux/.env, which is not in Git.
+#
+# Isolation note: this Hermes runs as a non-root user inside its own container
+# with no Docker socket and no published port. That container IS the whole-process
+# boundary the security policy requires. `terminal.backend: docker` is
+# deliberately NOT set here: enabling it would require mounting the host Docker
+# socket into Hermes, which grants effective host root and would break the very
+# boundary it is meant to provide.
+
+memory:
+  # Durable memories are proposed, then shown to the profile's owner before they
+  # are committed. Nothing is written silently.
+  write_approval: true
+
+skills:
+  # Agent-authored skills stay inactive until a human reviews the full diff.
+  write_approval: true
+  guard_agent_created: true
+
+tools:
+  # Explicit toolset rather than "whatever is available", so a runtime upgrade
+  # cannot silently widen what the agent can reach.
+  lazy_install: false
+
+api_server:
+  enabled: true
+  # Bound to the container interface so only the Sentry Gateway on the internal
+  # compose network can reach it. It is never published to a host or public port.
+  host: 0.0.0.0
+  port: 8642
+
+gateway:
+  # Unknown senders are denied. No allow-all.
+  allow_all_users: false

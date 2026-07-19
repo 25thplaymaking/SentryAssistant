@@ -1,0 +1,85 @@
+# Sentry private control plane.
+#
+# Nothing here publishes to a public interface. PostgreSQL and the Gateway bind
+# loopback only; Hermes is not published at all and is reachable solely on the
+# internal compose network. Public exposure is the ingress layer's job, and it
+# terminates at the Gateway, never at the runtime.
+#
+# Secrets come from deploy/linux/.env, which is not in Git.
+
+name: sentry
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sentry}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-sentry}
+      # Deterministic collation so index behaviour is reproducible on restore.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    ports:
+      # Loopback only. Never 0.0.0.0.
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sentry} -d ${POSTGRES_DB:-sentry}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [sentry]
+
+  hermes:
+    build:
+      context: ./hermes
+      args:
+        HERMES_VERSION: ${HERMES_VERSION:-latest}
+        # Match the host owner of ./data so the bind mount is writable without root.
+        HERMES_UID: ${HERMES_UID:-1000}
+        HERMES_GID: ${HERMES_GID:-1000}
+    restart: unless-stopped
+    environment:
+      HERMES_HOME: /home/hermes/.hermes
+      API_SERVER_ENABLED: "true"
+      # Required by Hermes even on a loopback bind.
+      API_SERVER_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: "8642"
+    volumes:
+      # One writable runtime data directory per profile. Never shared.
+      - ./data/hermes/personal:/home/hermes/.hermes
+    # Deliberately no `ports:` block. Only the Gateway may reach the runtime.
+    expose:
+      - "8642"
+    security_opt:
+      - no-new-privileges:true
+    networks: [sentry]
+
+  gateway:
+    build:
+      context: ../../server/sentry_gateway
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SENTRY_DATABASE_URL: postgresql://${POSTGRES_USER:-sentry}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sentry}
+      SENTRY_SIGNING_KEY: ${SENTRY_SIGNING_KEY:?SENTRY_SIGNING_KEY is required}
+      SENTRY_RUNTIME_NAME: hermes
+      SENTRY_HERMES_BASE_URL: http://hermes:8642
+      SENTRY_HERMES_API_KEY: ${HERMES_API_KEY}
+      SENTRY_HERMES_PINNED_VERSION: ${HERMES_VERSION:-unpinned}
+      SENTRY_HERMES_BOOTSTRAP_PROFILE_ID: ${SENTRY_BOOTSTRAP_PROFILE_ID:-}
+      SENTRY_HERMES_BOOTSTRAP_PROFILE_NAME: ${SENTRY_BOOTSTRAP_PROFILE_NAME:-sentry-personal}
+    ports:
+      # Loopback only. Ingress terminates here, never at Hermes.
+      - "127.0.0.1:8090:8090"
+    security_opt:
+      - no-new-privileges:true
+    networks: [sentry]
+
+networks:
+  sentry:
+    driver: bridge

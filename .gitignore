@@ -38,3 +38,10 @@ recordings/
 *.mp3
 *.m4a
 *.ogg
+
+# Sentry Gateway local state
+server/sentry_gateway/.venv/
+deploy/linux/data/
+__pycache__/
+*.pyc
+.pytest_cache/
