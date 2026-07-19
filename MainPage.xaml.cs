@@ -34,6 +34,7 @@ public sealed partial class MainPage : Page
     public MainPage()
     {
         InitializeComponent();
+        _probe = new LocalConnectionProbe(_settings);
         Loaded += MainPage_Loaded;
         Unloaded += (_, _) => _watcher?.Dispose();
     }
@@ -54,6 +55,7 @@ public sealed partial class MainPage : Page
 
         _gateway = new SentryGatewayClient(_settings.Settings.GatewayUrl, credentials: _settings);
         SetupGatewayBox.Text = _settings.Settings.GatewayUrl;
+        SetupTunnelBox.Text = _settings.Settings.GatewayTunnelTarget;
 
         // Resume a stored device credential rather than making someone redeem a
         // fresh enrolment code every launch. The outcome decides where the
@@ -64,6 +66,7 @@ public sealed partial class MainPage : Page
         // Render before any button is pressed so accessible names and enabled
         // states match the state machine from the outset.
         RenderSetup();
+        RefreshHarnessBaseline();
 
         if (restore.IsAuthenticated)
         {
@@ -188,6 +191,7 @@ public sealed partial class MainPage : Page
         if (status.Gateway.IsHealthy)
         {
             _settings.Settings.GatewayUrl = address;
+            _settings.Settings.GatewayTunnelTarget = SetupTunnelBox.Text.Trim();
             await _settings.SaveAsync();
             SetSetupStep(SetupStepId.GatewayAddress, SetupStepState.Done, $"Connected to {address}.");
             ActivityLog.Insert(0, $"{DateTime.Now:t} Gateway address saved.");
@@ -265,6 +269,72 @@ public sealed partial class MainPage : Page
         SetSetupStep(SetupStepId.VerifyRuntime, SetupStepState.Done, status.Runtime.Detail);
         await RefreshGatewayStatusAsync();
     }
+
+    // --- Connections ---------------------------------------------------------
+
+    public ObservableCollection<ConnectionRow> ConnectionRows { get; } = [];
+
+    /// <summary>
+    /// The harness rows repeated in the inspector rail. Same source as the
+    /// Connections page, so the two surfaces cannot contradict each other.
+    /// </summary>
+    public ObservableCollection<ConnectionRow> HarnessRows { get; } = [];
+
+    private readonly LocalConnectionProbe _probe;
+
+    /// <summary>
+    /// Re-examine what this machine actually has.
+    ///
+    /// The gateway status is fetched once and handed to the probe rather than
+    /// probed again, so this page cannot contradict the status line in the shell.
+    /// </summary>
+    private async Task RefreshConnectionsAsync()
+    {
+        ConnectionsRefreshButton.IsEnabled = false;
+        try
+        {
+            var status = _gateway is null
+                ? GatewayStatus.Unknown()
+                : await _gateway.GetStatusAsync();
+
+            var inventory = _probe.Inspect(status);
+
+            ConnectionRows.Clear();
+            foreach (var connection in inventory.Connections)
+            {
+                ConnectionRows.Add(new ConnectionRow(connection));
+            }
+
+            ConnectionsSummary.Text = inventory.Summary;
+            ApplyHarnessBaseline(inventory);
+        }
+        finally
+        {
+            ConnectionsRefreshButton.IsEnabled = true;
+        }
+    }
+
+    private void ApplyHarnessBaseline(ConnectionInventory inventory)
+    {
+        HarnessRows.Clear();
+        foreach (var harness in inventory.Connections
+                     .Where(c => c.Category == ConnectionRules.HarnessCategory))
+        {
+            HarnessRows.Add(new ConnectionRow(harness));
+        }
+    }
+
+    /// <summary>
+    /// Fill the inspector rail at startup.
+    ///
+    /// Only the local checks are run here — no gateway call — so opening the app
+    /// does not wait on the network to stop showing an empty panel.
+    /// </summary>
+    private void RefreshHarnessBaseline() =>
+        ApplyHarnessBaseline(_probe.Inspect(GatewayStatus.Unknown()));
+
+    private async void ConnectionsRefresh_Click(object sender, RoutedEventArgs e) =>
+        await RefreshConnectionsAsync();
 
     // --- Hermes control centre -----------------------------------------------
 
@@ -381,6 +451,7 @@ public sealed partial class MainPage : Page
         SettingsPage.Visibility = tag == "settings" ? Visibility.Visible : Visibility.Collapsed;
         SetupPage.Visibility = tag == "setup" ? Visibility.Visible : Visibility.Collapsed;
         HermesPage.Visibility = tag == "hermes" ? Visibility.Visible : Visibility.Collapsed;
+        ConnectionsPage.Visibility = tag == "connections" ? Visibility.Visible : Visibility.Collapsed;
 
         AssistantNavButton.IsChecked = tag == "assistant";
         WatcherNavButton.IsChecked = tag == "watcher";
@@ -388,6 +459,7 @@ public sealed partial class MainPage : Page
         SettingsNavButton.IsChecked = tag == "settings";
         SetupNavButton.IsChecked = tag == "setup";
         HermesNavButton.IsChecked = tag == "hermes";
+        ConnectionsNavButton.IsChecked = tag == "connections";
 
         CurrentPageTitle.Text = tag switch
         {
@@ -396,12 +468,14 @@ public sealed partial class MainPage : Page
             "settings" => "Settings",
             "setup" => "Setup",
             "hermes" => "Hermes control centre",
+            "connections" => "Connections",
             _ => "Assistant"
         };
 
         // Fetch on entry so the view is never showing a stale picture of a
         // runtime that may have changed since the app started.
         if (tag == "hermes") _ = RefreshHermesAsync();
+        if (tag == "connections") _ = RefreshConnectionsAsync();
     }
 
     private void OpenSettings_Click(object sender, RoutedEventArgs e) => NavigateTo("settings");

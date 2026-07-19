@@ -212,6 +212,14 @@
                             <TextBlock x:Name="SetupNavLabel" Text="Setup" VerticalAlignment="Center" />
                         </StackPanel>
                     </ToggleButton>
+                    <ToggleButton x:Name="ConnectionsNavButton" Tag="connections"
+                                  Style="{StaticResource SentryNavButtonStyle}" Click="Navigate_Click"
+                                  AutomationProperties.Name="Connections">
+                        <StackPanel Orientation="Horizontal" Spacing="11">
+                            <FontIcon Glyph="&#xE71B;" FontSize="15" Width="16" />
+                            <TextBlock x:Name="ConnectionsNavLabel" Text="Connections" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </ToggleButton>
                     <ToggleButton x:Name="HermesNavButton" Tag="hermes"
                                   Style="{StaticResource SentryNavButtonStyle}" Click="Navigate_Click"
                                   AutomationProperties.Name="Hermes control centre">
@@ -408,6 +416,16 @@
                                         <Button x:Name="Step1Button" Grid.Column="1" Content="Test" MinWidth="80"
                                                 Style="{StaticResource SentryPrimaryButtonStyle}" Click="SetupStep1_Click" />
                                     </Grid>
+                                    <!--
+                                        Only meaningful for a loopback address:
+                                        the gateway binds loopback on the server,
+                                        so it is reached through a forward that
+                                        nothing else supervises.
+                                    -->
+                                    <TextBox x:Name="SetupTunnelBox" PlaceholderText="bishop@gateway-host (optional, for a forwarded address)"
+                                             Style="{StaticResource SentryTextBoxStyle}"
+                                             AutomationProperties.Name="SSH tunnel target"
+                                             ToolTipService.ToolTip="Used only to print the exact forward command on the Connections page." />
                                     <TextBlock x:Name="Step1Detail" Text="" TextWrapping="Wrap"
                                                Style="{StaticResource SentryMonoMetaTextStyle}" />
                                 </StackPanel>
@@ -482,6 +500,66 @@
 
                         <InfoBar x:Name="SetupComplete" IsOpen="False" IsClosable="False" Severity="Success"
                                  Title="Setup complete" Message="This desktop is connected and enrolled." />
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!--
+                    Connections. Sentry reporting on its own dependencies, so a
+                    missing piece is something the app says rather than something
+                    the person has to notice.
+                -->
+                <ScrollViewer x:Name="ConnectionsPage" Visibility="Collapsed" Padding="28,24">
+                    <StackPanel MaxWidth="760" HorizontalAlignment="Left" Spacing="16">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Connections" Style="{StaticResource SentryPageTitleStyle}" />
+                                <TextBlock x:Name="ConnectionsSummary" Text="Nothing has been checked yet."
+                                           Foreground="{ThemeResource SentryTextSecondaryBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button x:Name="ConnectionsRefreshButton" Grid.Column="1" VerticalAlignment="Top"
+                                    Style="{StaticResource SentrySurfaceButtonStyle}" Click="ConnectionsRefresh_Click"
+                                    AutomationProperties.Name="Re-check connections">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE72C;" FontSize="12" />
+                                    <TextBlock Text="Re-check" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <!--
+                            Nothing here is stored or transmitted: these rows come
+                            from reading what exists on this machine.
+                        -->
+                        <ItemsControl x:Name="ConnectionsList" ItemsSource="{x:Bind ConnectionRows}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:ConnectionRow">
+                                    <Border Margin="0,0,0,8" Padding="14,12" CornerRadius="10"
+                                            Background="{ThemeResource SentrySurfaceBrush}"
+                                            BorderBrush="{ThemeResource SentryBorderBrush}" BorderThickness="1"
+                                            AutomationProperties.Name="{x:Bind AutomationName}">
+                                        <Grid ColumnSpacing="11">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="3" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                            <Border Width="3" CornerRadius="2" Background="{x:Bind ToneBrush}" />
+                                            <StackPanel Grid.Column="1" Spacing="5">
+                                                <Grid ColumnSpacing="10">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                    <TextBlock Grid.Column="1" Text="{x:Bind Label}" Foreground="{x:Bind ToneBrush}"
+                                                               Style="{StaticResource SentryEyebrowTextStyle}" VerticalAlignment="Center" />
+                                                </Grid>
+                                                <TextBlock Text="{x:Bind Detail}" TextWrapping="Wrap"
+                                                           Foreground="{ThemeResource SentryTextSecondaryBrush}" />
+                                                <TextBlock Text="{x:Bind Remedy}" TextWrapping="Wrap"
+                                                           Visibility="{x:Bind RemedyVisibility}"
+                                                           IsTextSelectionEnabled="True"
+                                                           Style="{StaticResource SentryMonoMetaTextStyle}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </StackPanel>
                 </ScrollViewer>
 
@@ -702,24 +780,32 @@
 
                     <StackPanel Spacing="9">
                         <TextBlock Text="HARNESS BASELINE" Style="{StaticResource SentryEyebrowTextStyle}" />
-                        <Border Padding="10,9" CornerRadius="10" Background="{ThemeResource SentryNavSelectedBrush}">
-                            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <StackPanel><TextBlock Text="Codex" FontWeight="SemiBold" /><TextBlock Text="Primary / local" Style="{StaticResource SentryMonoMetaTextStyle}" /></StackPanel>
-                                <Ellipse Grid.Column="1" Width="7" Height="7" Fill="{ThemeResource SentrySuccessBrush}" VerticalAlignment="Center" />
-                            </Grid>
-                        </Border>
-                        <Border Padding="10,9" CornerRadius="10" BorderBrush="{ThemeResource SentryBorderBrush}" BorderThickness="1">
-                            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <StackPanel><TextBlock Text="Claude" FontWeight="SemiBold" /><TextBlock Text="Secondary / local" Style="{StaticResource SentryMonoMetaTextStyle}" /></StackPanel>
-                                <TextBlock Grid.Column="1" Text="READY" Style="{StaticResource SentryMonoMetaTextStyle}" VerticalAlignment="Center" />
-                            </Grid>
-                        </Border>
-                        <Border Padding="10,9" CornerRadius="10" BorderBrush="{ThemeResource SentryBorderBrush}" BorderThickness="1">
-                            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <StackPanel><TextBlock Text="Grok Build" FontWeight="SemiBold" /><TextBlock Text="Open-source baseline" Style="{StaticResource SentryMonoMetaTextStyle}" /></StackPanel>
-                                <TextBlock Grid.Column="1" Text="AUDIT" Foreground="{ThemeResource SentryWarningBrush}" Style="{StaticResource SentryMonoMetaTextStyle}" VerticalAlignment="Center" />
-                            </Grid>
-                        </Border>
+                        <!--
+                            Driven by the same probe as the Connections page. These
+                            were once fixed labels that called Codex the primary
+                            harness with a green dot while its binary was not on
+                            the machine at all.
+                        -->
+                        <ItemsControl x:Name="HarnessBaseline" ItemsSource="{x:Bind HarnessRows}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:ConnectionRow">
+                                    <Border Padding="10,9" Margin="0,0,0,7" CornerRadius="10"
+                                            BorderBrush="{ThemeResource SentryBorderBrush}" BorderThickness="1"
+                                            AutomationProperties.Name="{x:Bind AutomationName}">
+                                        <Grid ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{x:Bind ShortState}" Style="{StaticResource SentryMonoMetaTextStyle}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="{x:Bind Label}" Foreground="{x:Bind ToneBrush}"
+                                                       Style="{StaticResource SentryMonoMetaTextStyle}" VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </StackPanel>
 
                     <Border Height="1" Background="{ThemeResource SentryBorderBrush}" />

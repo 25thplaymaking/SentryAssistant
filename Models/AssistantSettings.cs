@@ -22,4 +22,14 @@ public sealed class AssistantSettings
     /// failure. Not a secret: the gateway is authenticated separately.
     /// </summary>
     public string GatewayUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The <c>user@host</c> the gateway is reached through when its address is a
+    /// loopback one, so the connections page can print the exact forward command
+    /// instead of a placeholder.
+    ///
+    /// Not a secret — an SSH destination, never a key. Authentication is the
+    /// agent's business.
+    /// </summary>
+    public string GatewayTunnelTarget { get; set; } = string.Empty;
 }
