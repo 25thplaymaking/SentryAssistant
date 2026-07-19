@@ -158,21 +158,52 @@ A bug caught by the first live run and fixed: denied decisions were written
 inside the transaction that then rolled back on raise, so refusals were never
 persisted. They now commit on their own connection (`denied=0` → `denied=2`).
 
+## 3c. Every Linux-side goal clause is now complete and verified live
+
+| Goal clause | Evidence |
+|---|---|
+| Hermes behind an authenticated Gateway | ready 200, Hermes 0.18.2, restart-safe |
+| Complete profiles | personal 20/20; teams 28/28 |
+| Durable work orders | 13/13 |
+| Audit | append-only enforced by trigger, verified against the live database |
+| Trusted execution | 24/24 dispatch, plus Gateway→Node interop proven |
+
+Totals: 109 .NET tests (1 skipped without interop env), 81 gateway tests, and
+85 live end-to-end assertions across four suites.
+
+### Defects that only running the system exposed
+
+1. Adaptive state groups attached to the `Page` instead of the root child, so
+   they never evaluated and the canvas clipped at narrow widths.
+2. Denial audit written inside the transaction that rolled back on raise, so
+   refusals were never persisted.
+3. Revocation held only in memory, so a restart would have un-revoked every
+   unexpired token.
+4. `JwtSecurityTokenHandler` remapping `sub` onto a legacy URI. Both sides were
+   independently green and mutually incompatible; the node would have rejected
+   every real Gateway token. Only signing with the real Python and validating
+   with the real C# could catch this.
+5. Composer sized to its own content rather than the reading column.
+6. Caption buttons left dark-theme coloured on a light title bar.
+
 ## 4. Not yet built
 
-Deployed is the control-plane foundation, not the whole platform. Still absent:
-OIDC/Authentik browser sign-in and passkeys, the **team** HTTP API (invitations,
-membership, roles, sharing) on top of the schema, the Windows Sentry Node and its
-Codex/Claude/Grok adapters, the connectors (Gmail, Discord, Steam), reminders,
-notification routing and APNs, governed skill evaluation, and backup/restore.
+Every clause the goal named for the Linux side is done. Beyond that scope, still
+absent: OIDC/Authentik browser sign-in and passkeys, the connectors (Gmail,
+Discord, Steam), reminders, notification routing and APNs, governed skill
+evaluation, and backup/restore.
 
-Personal profiles are live end to end. Teams exist in the schema and in the
-tested authorization logic — a removed member already loses access, and observers
-already cannot dispatch — but no route creates a team or sends an invitation yet.
+Two honest qualifications on trusted execution:
 
-"Trusted execution" is half done: work orders are signed and the node-side
-validator is written and tested (`work_order_signing.py`), but no Windows Node
-process exists to receive them, so nothing has actually executed on a node.
+- The dispatch loop is proven end to end, and the node's validator, workspace
+  registry, and command allowlist are all tested. What does not yet exist is a
+  long-running Node worker process that polls continuously and runs at sign-in;
+  the pieces it would be assembled from are built and verified.
+- The bundled harness runs allowlisted commands. Codex and Claude adapters are
+  not wired, so no coding harness has executed through Sentry yet.
+
+Do not describe Sentry as production-ready. Hermes still has no inference
+provider, so the assistant cannot answer, and no phone client exists.
 
 Do not describe Sentry as production-ready. By the plan's own gate list this is
 short of Gate 1 until the inference provider is set and a node is enrolled.
