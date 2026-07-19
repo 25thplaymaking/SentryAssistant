@@ -1,0 +1,176 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using Microsoft.IdentityModel.Tokens;
+using Sentry.Node.Security;
+
+namespace Sentry.Node.Tests;
+
+public class WorkOrderValidatorTests
+{
+    private const string Key = "node-test-signing-key-padded-past-the-32-byte-minimum";
+
+    private static NodeExpectation Expectation() => new(
+        NodeId: "node-1",
+        NodeOwnerUserId: "bryce",
+        RegisteredWorkspaces: new HashSet<string> { "ws-sentry", "ws-25vid" },
+        AllowedHarnesses: new HashSet<string> { "codex", "claude" },
+        TeamMembers: new HashSet<string> { "bryce", "colleague" });
+
+    /// <summary>Mirrors what the Gateway's sign_work_order produces.</summary>
+    private static string Sign(
+        string signingKey = Key,
+        string user = "bryce",
+        string nodeId = "node-1",
+        string workspace = "ws-sentry",
+        string harness = "codex",
+        string mode = "readOnly",
+        string? teamId = null,
+        int lifetimeMinutes = 15,
+        string? nonce = null)
+    {
+        var credentials = new SigningCredentials(
+            new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey)),
+            SecurityAlgorithms.HmacSha256);
+
+        var claims = new List<Claim>
+        {
+            new(JwtRegisteredClaimNames.Sub, user),
+            new("wid", "wo-1"),
+            new("pid", "p-1"),
+            new("nid", nodeId),
+            new("wsp", workspace),
+            new("hns", harness),
+            new("mode", mode),
+            new("cid", "corr-1"),
+            new("nonce", nonce ?? Guid.NewGuid().ToString("N"))
+        };
+        if (teamId is not null) claims.Add(new Claim("tid", teamId));
+
+        // notBefore is derived from expiry so a negative lifetime still produces a
+        // structurally valid (but expired) token rather than failing construction.
+        var expires = DateTime.UtcNow.AddMinutes(lifetimeMinutes);
+        var token = new JwtSecurityToken(
+            issuer: WorkOrderValidator.Issuer,
+            audience: WorkOrderValidator.WorkOrderAudience,
+            claims: claims,
+            notBefore: expires.AddMinutes(-30),
+            expires: expires,
+            signingCredentials: credentials);
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    [Fact]
+    public void AcceptsAWellFormedOrder()
+    {
+        var order = new WorkOrderValidator(Key, Expectation()).Validate(Sign());
+        Assert.Equal("wo-1", order.WorkOrderId);
+        Assert.Equal("ws-sentry", order.WorkspaceId);
+        Assert.Equal("codex", order.Harness);
+    }
+
+    [Fact]
+    public void RejectsAForgedSignature()
+    {
+        var forged = Sign(signingKey: "attacker-key-also-padded-past-the-32-byte-minimum");
+        var exception = Assert.Throws<WorkOrderRejectedException>(
+            () => new WorkOrderValidator(Key, Expectation()).Validate(forged));
+        Assert.Contains("signature is invalid", exception.Message);
+    }
+
+    [Fact]
+    public void RejectsAnExpiredOrder()
+    {
+        var expired = Sign(lifetimeMinutes: -5);
+        var exception = Assert.Throws<WorkOrderRejectedException>(
+            () => new WorkOrderValidator(Key, Expectation()).Validate(expired));
+        Assert.Contains("expired", exception.Message);
+    }
+
+    [Fact]
+    public void RejectsAReplayedNonce()
+    {
+        var validator = new WorkOrderValidator(Key, Expectation());
+        var token = Sign(nonce: "fixed-nonce");
+        validator.Validate(token);
+
+        var exception = Assert.Throws<WorkOrderRejectedException>(() => validator.Validate(token));
+        Assert.Contains("nonce has already been used", exception.Message);
+    }
+
+    // A valid signature is necessary but never sufficient: the node re-checks
+    // everything it knows locally.
+    [Fact]
+    public void RejectsAnOrderAimedAtAnotherNode()
+    {
+        var exception = Assert.Throws<WorkOrderRejectedException>(
+            () => new WorkOrderValidator(Key, Expectation()).Validate(Sign(nodeId: "node-2")));
+        Assert.Contains("different execution node", exception.Message);
+    }
+
+    [Fact]
+    public void RejectsAnUnregisteredWorkspace()
+    {
+        var exception = Assert.Throws<WorkOrderRejectedException>(
+            () => new WorkOrderValidator(Key, Expectation())
+                .Validate(Sign(workspace: @"C:\Users\Bryce\.ssh")));
+        Assert.Contains("Raw remote paths are refused", exception.Message);
+    }
+
+    [Fact]
+    public void RejectsADisabledHarness()
+    {
+        var exception = Assert.Throws<WorkOrderRejectedException>(
+            () => new WorkOrderValidator(Key, Expectation()).Validate(Sign(harness: "grok-build")));
+        Assert.Contains("not enabled", exception.Message);
+    }
+
+    [Fact]
+    public void RejectsElevatedWorkFromAnyoneButTheNodeOwner()
+    {
+        var exception = Assert.Throws<WorkOrderRejectedException>(
+            () => new WorkOrderValidator(Key, Expectation())
+                .Validate(Sign(user: "colleague", mode: "approvedElevated")));
+        Assert.Contains("node owner", exception.Message);
+    }
+
+    [Fact]
+    public void AcceptsElevatedWorkFromTheNodeOwner()
+    {
+        var order = new WorkOrderValidator(Key, Expectation())
+            .Validate(Sign(user: "bryce", mode: "approvedElevated"));
+        Assert.Equal("approvedElevated", order.Mode);
+    }
+
+    [Fact]
+    public void RejectsTeamWorkFromARemovedMember()
+    {
+        var exception = Assert.Throws<WorkOrderRejectedException>(
+            () => new WorkOrderValidator(Key, Expectation())
+                .Validate(Sign(user: "ex-colleague", teamId: "team-1")));
+        Assert.Contains("not a current member", exception.Message);
+    }
+
+    [Fact]
+    public void AcceptsTeamWorkFromACurrentMember()
+    {
+        var order = new WorkOrderValidator(Key, Expectation())
+            .Validate(Sign(user: "colleague", teamId: "team-1"));
+        Assert.Equal("team-1", order.TeamId);
+    }
+
+    [Fact]
+    public void RejectsAnUnknownMode()
+    {
+        var exception = Assert.Throws<WorkOrderRejectedException>(
+            () => new WorkOrderValidator(Key, Expectation()).Validate(Sign(mode: "rootAccess")));
+        Assert.Contains("mode is unknown", exception.Message);
+    }
+
+    [Fact]
+    public void RejectsAWeakSigningKeyAtConstruction()
+    {
+        Assert.Throws<ArgumentException>(() => new WorkOrderValidator("too-short", Expectation()));
+    }
+}
