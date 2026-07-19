@@ -21,7 +21,7 @@ public class ProcessHarnessAdapterTests
     {
         var (progress, _) = Recorder();
         var result = await new ProcessHarnessAdapter("codex").ExecuteAsync(
-            "dotnet build", "readOnly", Workspace(Path.GetTempPath()), progress, default);
+            "dotnet build", "readOnly", Workspace(Path.GetTempPath()), progress, TestContext.Current.CancellationToken);
 
         Assert.Equal("failed", result.Outcome);
         Assert.Contains("Refused", result.Summary);
@@ -33,7 +33,7 @@ public class ProcessHarnessAdapterTests
     {
         var (progress, _) = Recorder();
         var result = await new ProcessHarnessAdapter("codex").ExecuteAsync(
-            "git push origin main", "workspaceWrite", Workspace(Path.GetTempPath()), progress, default);
+            "git push origin main", "workspaceWrite", Workspace(Path.GetTempPath()), progress, TestContext.Current.CancellationToken);
 
         Assert.Equal("failed", result.Outcome);
         Assert.Contains("never permitted", result.Summary);
@@ -45,7 +45,7 @@ public class ProcessHarnessAdapterTests
         var (progress, _) = Recorder();
         var missing = Path.Combine(Path.GetTempPath(), $"sentry-missing-{Guid.NewGuid():N}");
         var result = await new ProcessHarnessAdapter("codex").ExecuteAsync(
-            "git status", "readOnly", Workspace(missing), progress, default);
+            "git status", "readOnly", Workspace(missing), progress, TestContext.Current.CancellationToken);
 
         Assert.Equal("failed", result.Outcome);
         Assert.True((bool)result.Evidence["missingRoot"]);
@@ -59,7 +59,7 @@ public class ProcessHarnessAdapterTests
         {
             var (progress, events) = Recorder();
             var result = await new ProcessHarnessAdapter("codex").ExecuteAsync(
-                "git status", "readOnly", Workspace(root), progress, default);
+                "git status", "readOnly", Workspace(root), progress, TestContext.Current.CancellationToken);
 
             // Outside a repository git exits non-zero; either way the adapter
             // must report an honest outcome with evidence rather than throw.
@@ -80,7 +80,7 @@ public class ProcessHarnessAdapterTests
     {
         var (progress, _) = Recorder();
         var result = await new ProcessHarnessAdapter("codex").ExecuteAsync(
-            "git status", "readOnly", Workspace(Path.GetTempPath()), progress, default);
+            "git status", "readOnly", Workspace(Path.GetTempPath()), progress, TestContext.Current.CancellationToken);
 
         // Running a command proves it ran. It does not prove tested or deployed.
         Assert.Equal("implemented", result.StatusBoundary);
@@ -97,7 +97,7 @@ public class ProcessHarnessAdapterTests
         {
             var (progress, _) = Recorder();
             var result = await new ProcessHarnessAdapter("codex").ExecuteAsync(
-                $"git status && echo pwned > {marker}", "readOnly", Workspace(root), progress, default);
+                $"git status && echo pwned > {marker}", "readOnly", Workspace(root), progress, TestContext.Current.CancellationToken);
 
             Assert.False(File.Exists(marker), "the chained command must not have run");
             Assert.NotNull(result);
@@ -109,7 +109,7 @@ public class ProcessHarnessAdapterTests
     }
 
     [Fact]
-    public async Task CancellationIsReportedAsCancelled()
+    public async Task CancellationIsReportedRatherThanThrown()
     {
         using var source = new CancellationTokenSource();
         await source.CancelAsync();
@@ -118,14 +118,24 @@ public class ProcessHarnessAdapterTests
         try
         {
             var (progress, _) = Recorder();
+
+            // The contract is that cancellation surfaces as a reported outcome,
+            // never as an exception escaping the adapter. Whether the process is
+            // killed first or exits on its own is a race, so the outcome is not
+            // pinned to exactly "cancelled".
             var result = await new ProcessHarnessAdapter("codex").ExecuteAsync(
                 "git log", "readOnly", Workspace(root), progress, source.Token);
 
+            Assert.NotNull(result);
             Assert.Contains(result.Outcome, new[] { "cancelled", "succeeded", "failed" });
+            Assert.Equal("implemented", result.StatusBoundary);
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            // Best effort: a killed child can briefly hold a handle in the directory.
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
     }
 }
+

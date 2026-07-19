@@ -13,6 +13,14 @@
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.3.0" />
   </ItemGroup>
 
+  <!-- The automation settings ship next to the binary so the adapter can point
+       Claude at them without depending on the source tree layout. -->
+  <ItemGroup>
+    <None Include="Harnesses\claude-automation-settings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Sentry.Contracts\Sentry.Contracts.csproj" />
   </ItemGroup>

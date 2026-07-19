@@ -22,4 +22,13 @@
     <ProjectReference Include="..\..\src\Sentry.Node\Sentry.Node.csproj" />
   </ItemGroup>
 
+  <!-- Linked into the test output so the settings assertions read the real
+       shipped file rather than walking a relative source path. -->
+  <ItemGroup>
+    <None Include="..\..\src\Sentry.Node\Harnesses\claude-automation-settings.json"
+          Link="claude-automation-settings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

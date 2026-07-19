@@ -1,0 +1,43 @@
+{
+  "$comment": [
+    "Sentry's dedicated Claude Code automation settings.",
+    "Passed with --settings so the interactive installation's configuration is",
+    "NOT inherited. Prompt-skipping and permission-bypass flags must never appear",
+    "in this file: a Sentry-dispatched run is unattended, so there is nobody to",
+    "answer a permission prompt and nothing may be auto-approved on their behalf.",
+    "A test asserts those flag names are absent from this file entirely, which is",
+    "why they are described here rather than named.",
+    "Tools are additionally allowlisted per work-order mode on the command line;",
+    "this file is the floor, not the whole policy."
+  ],
+
+  "permissions": {
+    "defaultMode": "default",
+
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(git clean:*)",
+      "Bash(git remote:*)",
+      "Bash(npm publish:*)",
+      "Bash(dotnet nuget push:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/.ssh/**)",
+      "Read(**/id_rsa*)",
+      "Read(**/id_ed25519*)",
+      "Read(**/*.pem)",
+      "Read(**/*.pfx)",
+      "Read(**/credentials*)",
+      "Write(./.env)",
+      "Write(**/.ssh/**)"
+    ]
+  },
+
+  "includeCoAuthoredBy": false,
+  "cleanupPeriodDays": 7
+}
