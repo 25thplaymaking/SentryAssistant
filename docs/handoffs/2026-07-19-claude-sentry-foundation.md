@@ -15,18 +15,24 @@
 
 ## Goal for Claude
 
-Continue Sentry as a private, polished Windows personal-assistant and code-watcher control surface. First finish and substantially elevate the desktop UI into an unmistakably modern, original Sentry application; then continue the authoritative implementation plan toward the Linux Gateway, replaceable Hermes runtime, multiple profiles, team work orders, trusted execution nodes, voice, connectors, and private phone access.
+Continue Sentry as a private, polished Windows personal-assistant and code-watcher control surface. First finish and substantially elevate the desktop UI into an unmistakably modern, original Sentry application. Then fully deploy Hermes behind the authenticated Linux Gateway and build, sign, install, and verify the private iOS phone app. Continue through the required profile, work-order, trusted-node, notification, and audit slices so the phone is a functional remote Sentry client rather than an isolated mobile mockup.
 
 Do not treat the current shell as finished. It proves the layout and contracts, but the user wants the visual experience **incredibly modernized and updated throughout**. The next desktop pass is a primary deliverable, not optional polish.
+
+The user also explicitly wants the continuation to go beyond the desktop handoff: once the UI milestone is complete, Hermes must be live on the Linux box with real authentication, and the iOS application must be privately shipped to the user's iPhone. Do not end at an architecture document, generated project, container build, simulator-only proof, or unsigned archive. Finish every safe step and report only the exact credential, signing, DNS, device, or platform gate that truly requires the user.
+
+For a single Claude goal covering the whole sequence, the user should invoke `/complete-sentry-platform`. That explicit invocation authorizes the coordinator to follow the handoff through the UI, Hermes/auth, iOS, and release-evidence phases while preserving approval gates for credentials, human-facing actions, destructive operations, and Apple account changes.
 
 ## Read before changing anything
 
 1. `CLAUDE.md`
 2. `docs/plans/2026-07-19-sentry-hermes-os-integration.md` — authoritative product and security plan
-3. `MainPage.xaml` and `MainPage.xaml.cs` — current shell and prototype behavior
-4. `Themes/SentryTheme.xaml` and `Themes/SentryControlStyles.xaml` — current design tokens
-5. `src/Sentry.Contracts/WorkOrders.cs` and `src/Sentry.Contracts/Events.cs` — product-owned boundaries
-6. `tests/Sentry.Contracts.Tests/WorkOrderContractTests.cs` — executable contract requirements
+3. `docs/research/claude-skills-for-sentry.md` — reviewed Claude skill strategy and third-party candidates
+4. `.claude/skills/*/SKILL.md` — Sentry-owned executable workflows
+5. `MainPage.xaml` and `MainPage.xaml.cs` — current shell and prototype behavior
+6. `Themes/SentryTheme.xaml` and `Themes/SentryControlStyles.xaml` — current design tokens
+7. `src/Sentry.Contracts/WorkOrders.cs` and `src/Sentry.Contracts/Events.cs` — product-owned boundaries
+8. `tests/Sentry.Contracts.Tests/WorkOrderContractTests.cs` — executable contract requirements
 
 Then reconcile:
 
@@ -129,7 +135,26 @@ Use this as the first concise plan, then execute it without another planning cer
 3. Add UI/view-model tests where behavior is extractable; build after each XAML slice.
 4. Verify the real packaged window at wide, medium, and compact sizes in light, dark, and high contrast, using keyboard navigation and Windows reduced motion.
 5. Correct every visual, clipping, focus, contrast, layout, or state problem found. Rerun the entire verification gate.
-6. Commit the modernized shell as a focused commit. Only then proceed to Task 2 of the authoritative plan if the goal still includes backend work.
+6. Commit the modernized shell as a focused commit.
+7. Explicitly invoke `deploy-sentry-hermes` and implement Tasks 2-8 far enough to provide a live authenticated control plane, durable work orders, profiles, and at least one trusted execution path.
+8. Explicitly invoke `ship-sentry-ios` and implement Tasks 9 and 11 as a real private phone client with OIDC/PKCE, secure device enrollment, APNs, push-to-talk, work-order/status access, approvals, and one-sentence resolution playback.
+9. Invoke `verify-sentry-release` and prove the phone-to-Gateway-to-runtime/Node-to-resolution path, including offline queueing, revocation, audit, backup/restore, and safe notification payloads.
+
+Do not stop automatically after the desktop commit. The requested goal continues through Hermes authentication and private iPhone installation unless a precise external credential, Apple signing, DNS, or physical-device gate prevents further safe progress.
+
+## Post-UI deployment outcome
+
+“Hermes fully set up with auth and phone app on iOS” means all of the following are true or have one precisely documented user-owned gate:
+
+- Hermes runs as a pinned, non-root, isolated service on the Linux server and is replaceable behind `AgentRuntime`.
+- The Sentry Gateway, PostgreSQL, Authentik/OIDC, TLS ingress, audit, backup, and health/readiness services are live and restart safely.
+- Runtime administration stays loopback-only; Windows and iOS clients authenticate to Sentry-owned endpoints, never directly to Hermes.
+- Bryce has a personal profile, enrolled Windows node, enrolled iPhone, recovery path, revocable sessions, and profile-scoped secrets.
+- The iOS app completes browser-based OIDC authorization with PKCE, stores only revocable device credentials in Keychain/Secure Enclave-backed storage, and supports biometric confirmation for elevated actions.
+- APNs delivers redacted status events; notification taps deep-link into authenticated detail. No source, secret, email body, or approval token appears in a push payload.
+- The phone can create or continue a work order, see node/harness availability, receive needs-input and resolution updates, approve bounded actions, use reviewable push-to-talk, and optionally play exactly one resolved sentence.
+- The app is installed on Bryce's physical iPhone through the selected private distribution path and survives relaunch, token refresh, network loss, VPN transitions, and device revocation.
+- A full end-to-end audit proves who requested, approved, executed, reviewed, and resolved each run.
 
 ## Full UI modernization directive
 

@@ -4,6 +4,7 @@ This repository is the private Windows control surface for Sentry, a personal an
 
 1. `docs/handoffs/2026-07-19-claude-sentry-foundation.md`
 2. `docs/plans/2026-07-19-sentry-hermes-os-integration.md`
+3. `docs/research/claude-skills-for-sentry.md`
 
 ## Current checkout
 
@@ -22,6 +23,20 @@ This repository is the private Windows control surface for Sentry, a personal an
 - Never run multiple writer harnesses in one worktree. One may write; others may review read-only after it finishes.
 - Treat the current direct OpenAI desktop path and status labels as prototype behavior, not proof of the future Gateway or live harness connections.
 - Do not call work complete from a build alone. Verify the packaged Windows window and state the exact remaining runtime gate.
+- After the Windows UI milestone, continue through a live Hermes deployment, authenticated Gateway, and privately installed iOS app. Do not stop at scaffolding or configuration files when the selected goal includes the full platform.
+
+## Project skills
+
+Claude Code discovers the Sentry-owned workflows in `.claude/skills/` automatically:
+
+- `complete-sentry-platform` — explicit user-invoked coordinator for the complete UI → Hermes/auth → iOS → release goal.
+- `modernize-sentry-ui` — finish and prove the native Windows experience.
+- `deploy-sentry-hermes` — explicit user-invoked Linux/Hermes deployment workflow.
+- `secure-sentry-auth` — implement and review identity, device, token, and profile boundaries.
+- `ship-sentry-ios` — explicit user-invoked private iPhone build, signing, APNs, and installation workflow.
+- `verify-sentry-release` — prove cross-boundary desktop, Gateway, runtime, Node, and phone behavior.
+
+Deployment, iOS shipping, and the full-platform coordinator are intentionally not model-invocable. For the complete authorized goal, start Claude with `/complete-sentry-platform`. Otherwise invoke individual side-effecting workflows only when the user's request authorizes live infrastructure or Apple-account changes.
 
 ## UI direction
 
