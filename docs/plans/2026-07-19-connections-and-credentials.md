@@ -7,6 +7,40 @@ that produced it.
 
 ---
 
+## 0. Status — tasks 1 to 4 are done
+
+| Task | State | Commit |
+|---|---|---|
+| 3 — Persist device credentials | Done, verified live | `35c83a4` |
+| 1 — Connections surface | Done, verified live | `cf1132a` |
+| 4 — Honest setup step 3 | Done | `8c44f26` |
+| 2 — Sentry hooks | Done, verified against a copy | `35f41ef` |
+| — Per-call gateway deadlines | Done, verified live | `e814f50` |
+| 5 — Codex adapter | **Blocked** on decision 2 below | — |
+
+Baseline is now 214 tests (212 pass, 2 opt-in skips), 0 warnings.
+
+**Found while verifying, and worth remembering:** `HttpClient.Timeout` applies to
+every request and is *not* overridden by a `CancellationToken`. A six-second
+client with a forty-five-second linked token still aborts at six. The admin
+endpoint takes 8.2s, so the Hermes control centre had never worked — it reported
+an unreachable gateway on every call. Deadlines are now per call, with no global
+timeout. This hid because every failure path is caught and turned into a calm
+status, so a call that could never succeed looked like a quiet outage.
+
+**Two things deliberately not done**, each needing a human decision:
+- `~/.claude/settings.json` was **not** modified. The hook installer is verified
+  against a copy. Run `scripts/install-sentry-hooks.ps1` to apply it for real.
+- Hermes still has no inference provider, so it cannot answer. See decision 1.
+
+**Left alone:** the `devices` table still holds test rows from earlier suites
+(`e2e-*`, `dispatch-*`, `team-*`) and four `DESKTOP-CTQIKKN` devices, three of
+them stale from before credentials persisted. Probe devices created during this
+session were revoked. Clearing the rest is a judgement call about someone else's
+data.
+
+---
+
 ## 1. Verified state — do not re-derive
 
 Everything below was confirmed by running it, not by reading code.
@@ -189,7 +223,17 @@ approach. Phase one uses `codex exec --json` over local stdio.
 Carry these forward; each one was learned the hard way.
 
 - **`127.0.0.1` is broken machine-wide for HTTP.** `::1` and `localhost` work.
-  Affects any local probe or tunnel.
+  Confirmed again: `ssh -L` creates listeners on *both*, and only the `::1` one
+  answers. The gateway address must be `http://localhost:18090`, never
+  `http://127.0.0.1:18090`.
+- **The desktop is packaged, so `LocalApplicationData` redirects.** Settings live
+  at `%LOCALAPPDATA%\Packages\ECE61934-…_1z32rh13vfry6\LocalCache\Local\SentryAssistant\settings.json`,
+  not `%LOCALAPPDATA%\SentryAssistant\`. Looking in the obvious place shows no
+  file and invites the wrong conclusion.
+- **Check process start times before trusting a running window.** A stale
+  instance from an earlier session looked like a fresh build and very nearly
+  produced a false verification.
+- **`HttpClient.Timeout` beats any `CancellationToken`.** See §0.
 - Use `& 'C:\Program Files\dotnet\dotnet.exe'` — the `dotnet` first on PATH is
   x86 and lacks the SDK.
 - Tests are xUnit v3 on Microsoft Testing Platform. Do not revert to VSTest; its
