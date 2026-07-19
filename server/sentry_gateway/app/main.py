@@ -16,7 +16,9 @@ from fastapi import FastAPI, Response, status
 
 from .agent_runtime.base import AgentRuntime
 from .agent_runtime.hermes import HermesInstance, HermesRuntime
+from .auth.tokens import TokenService
 from .config import Settings, get_settings
+from .routes import workorders as workorders_routes
 
 
 def build_runtime(settings: Settings) -> AgentRuntime:
@@ -43,6 +45,12 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.settings = settings
     app.state.runtime = build_runtime(settings)
+
+    # Without a signing key there is no token verification, and every
+    # authenticated route fails closed rather than allowing anonymous access.
+    app.state.tokens = (
+        TokenService(settings.signing_key) if settings.has_signing_key else None
+    )
     try:
         app.state.pool = await asyncpg.create_pool(
             settings.database_url, min_size=1, max_size=8
@@ -68,6 +76,9 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+
+app.include_router(workorders_routes.router)
 
 
 @app.get("/health/live")
