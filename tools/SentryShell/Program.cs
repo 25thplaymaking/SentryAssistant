@@ -16,6 +16,14 @@ internal static class Program
     private static readonly Color Bone   = Color.FromArgb(0xF4, 0xF3, 0xEF);
     private static readonly Color Muted  = Color.FromArgb(0xA3, 0xA3, 0xAB);
 
+    // Set only by the tray's Quit item. FormClosing consults it to tell a real
+    // exit apart from the user pressing X, which must not end the session.
+    private static bool _exiting;
+
+    // The "it's still running" balloon is shown once per launch, not once per
+    // hide — repeating it on every close would be nagware.
+    private static bool _toldAboutTray;
+
     [STAThread]
     private static void Main()
     {
@@ -23,6 +31,9 @@ internal static class Program
 
         var tunnel = new Tunnel();
         var form = BuildWindow(tunnel, out var web, out var status);
+        // Disposed when Main returns, which is what removes the icon. Without
+        // it Windows leaves a ghost in the tray until the user hovers over it.
+        using var tray = BuildTray(form, tunnel, web, status);
 
         form.Shown += async (_, _) =>
         {
@@ -82,9 +93,135 @@ internal static class Program
             }
         };
 
+        // X hides to the tray instead of ending the session. Sentry is a
+        // background presence, not a document window: the tunnel is owned
+        // in-process, so a real exit drops the forward and makes the next
+        // launch pay the full dial again. Quit from the tray menu is the way
+        // out, and CloseReason keeps Windows shutdown/logoff from being
+        // mistaken for it — cancelling those would block the shutdown.
+        form.FormClosing += (_, e) =>
+        {
+            if (_exiting || e.CloseReason != CloseReason.UserClosing) return;
+            e.Cancel = true;
+            HideToTray(form, tray);
+        };
+
         form.FormClosed += (_, _) => tunnel.Dispose();
 
         Application.Run(form);
+    }
+
+    /// <summary>Reconnect the forward and reload, shared by both menus.</summary>
+    private static async Task ReconnectAsync(Tunnel tunnel, WebView2 web, Label status)
+    {
+        status.Text = "Reconnecting…";
+        status.Visible = true;
+        web.Visible = false;
+        if (await tunnel.StartAsync(TimeSpan.FromSeconds(45)))
+            web.CoreWebView2?.Navigate(Tunnel.WebUiUrl);
+        else
+            status.Text = "Still cannot reach grain.silo.";
+    }
+
+    private static void OpenLogFolder()
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SentryAssistant");
+        try { Process.Start(new ProcessStartInfo(dir) { UseShellExecute = true }); } catch { }
+    }
+
+    private static void RestoreFromTray(Form form)
+    {
+        form.Show();
+        if (form.WindowState == FormWindowState.Minimized) form.WindowState = FormWindowState.Normal;
+        form.Activate();
+    }
+
+    private static void HideToTray(Form form, NotifyIcon tray)
+    {
+        form.Hide();
+        if (_toldAboutTray) return;
+        _toldAboutTray = true;
+        // Closing to a tray icon is invisible if the user does not know it
+        // happened — the first time, say so once.
+        try
+        {
+            tray.ShowBalloonTip(
+                4000,
+                "Sentry is still running",
+                "The window closed to the system tray. Use Quit there to stop it.",
+                ToolTipIcon.None);
+        }
+        catch { /* balloons are suppressible by policy; never fatal */ }
+    }
+
+    /// <summary>The tray icon and its menu — the only route to a real exit.</summary>
+    private static NotifyIcon BuildTray(Form form, Tunnel tunnel, WebView2 web, Label status)
+    {
+        var menu = new ContextMenuStrip();
+
+        var open = new ToolStripMenuItem("Open Sentry");
+        open.Click += (_, _) => RestoreFromTray(form);
+
+        var reconnect = new ToolStripMenuItem("Reconnect");
+        reconnect.Click += async (_, _) => await ReconnectAsync(tunnel, web, status);
+
+        var logs = new ToolStripMenuItem("Open log folder");
+        logs.Click += (_, _) => OpenLogFolder();
+
+        var quit = new ToolStripMenuItem("Quit Sentry");
+        quit.Click += (_, _) =>
+        {
+            _exiting = true;
+            Application.Exit();   // closes the form, which disposes the tunnel
+        };
+
+        menu.Items.Add(open);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(reconnect);
+        menu.Items.Add(logs);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(quit);
+
+        var tray = new NotifyIcon
+        {
+            Text = "Frontir Sentry",
+            Icon = TrayIcon(),
+            ContextMenuStrip = menu,
+            Visible = true,
+        };
+        // Double-click, not single: a single click belongs to the context menu
+        // on the right button and selection on the left everywhere in Windows.
+        tray.DoubleClick += (_, _) => RestoreFromTray(form);
+        return tray;
+    }
+
+    private static Icon TrayIcon()
+    {
+        // frontir.ico is an <ApplicationIcon>, i.e. embedded in the PE — it is
+        // NOT copied next to the exe, and under PublishSingleFile there is no
+        // loose file to find at all. Reading it off the executable is what
+        // actually yields the shield here; the loose-file probe is only a
+        // courtesy for a plain `dotnet run` from the project directory.
+        try
+        {
+            var ico = Path.Combine(AppContext.BaseDirectory, "frontir.ico");
+            // Ask for the small-icon size so Windows picks that frame out of
+            // the .ico rather than downscaling the 256px one into mush.
+            if (File.Exists(ico)) return new Icon(ico, SystemInformation.SmallIconSize);
+        }
+        catch { /* fall through */ }
+        try
+        {
+            var self = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(self))
+            {
+                var embedded = Icon.ExtractAssociatedIcon(self);
+                if (embedded is not null) return embedded;
+            }
+        }
+        catch { /* fall through to the stock icon */ }
+        return SystemIcons.Application;
     }
 
     private static Form BuildWindow(Tunnel tunnel, out WebView2 web, out Label status)
@@ -128,23 +265,9 @@ internal static class Program
         var reconnect = new ToolStripMenuItem("Reconnect");
         var localWeb = web;
         var localStatus = status;
-        reconnect.Click += async (_, _) =>
-        {
-            localStatus.Text = "Reconnecting…";
-            localStatus.Visible = true;
-            localWeb.Visible = false;
-            if (await tunnel.StartAsync(TimeSpan.FromSeconds(45)))
-                localWeb.CoreWebView2?.Navigate(Tunnel.WebUiUrl);
-            else
-                localStatus.Text = "Still cannot reach grain.silo.";
-        };
+        reconnect.Click += async (_, _) => await ReconnectAsync(tunnel, localWeb, localStatus);
         var logs = new ToolStripMenuItem("Open log folder");
-        logs.Click += (_, _) =>
-        {
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SentryAssistant");
-            try { Process.Start(new ProcessStartInfo(dir) { UseShellExecute = true }); } catch { }
-        };
+        logs.Click += (_, _) => OpenLogFolder();
         menu.Items.Add(reconnect);
         menu.Items.Add(logs);
         status.ContextMenuStrip = menu;
