@@ -10,6 +10,24 @@
 # socket into Hermes, which grants effective host root and would break the very
 # boundary it is meant to provide.
 
+model:
+  # Pin the active inference provider explicitly. This outranks environment
+  # autodetection in Hermes' resolve_provider() priority chain, so the keys
+  # present in .env do not decide which provider runs — this line does.
+  #
+  # The registry name is "openai-api" (native OpenAI). It is NOT "openai".
+  # Leaving this unset while OPENAI_API_KEY is exported would resolve to
+  # "openrouter" and send requests to the wrong endpoint.
+  #
+  # To switch providers: change this value, then
+  #   docker compose restart hermes
+  # Valid names include: openai-api, anthropic, gemini, xai, deepseek, nous.
+  provider: openai-api
+  # Mid-tier: meaningfully cheaper per token than the flagship, so the daily
+  # data-sharing allotment stretches further on unattended cron turns.
+  # Raise to gpt-5.5 if reasoning quality proves insufficient.
+  model: gpt-5.4
+
 memory:
   # Durable memories are proposed, then shown to the profile's owner before they
   # are committed. Nothing is written silently.
@@ -24,6 +42,19 @@ tools:
   # Explicit toolset rather than "whatever is available", so a runtime upgrade
   # cannot silently widen what the agent can reach.
   lazy_install: false
+
+  # MEASURED 2026-07-19 — do not re-attempt without new evidence.
+  # Tool schemas are 83% of every request (47,623 of 57,543 bytes). Three
+  # levers were tested against /v1/responses and ALL had zero effect on the
+  # 11,565-token floor:
+  #   1. `hermes tools disable computer_use browser`  (cli platform)
+  #   2. `hermes tools disable cronjob image_gen delegation`
+  #   3. `tools.tool_search.enabled: "on"`
+  # Cause: `hermes tools disable` governs the cli/messaging platforms, and
+  # tool_search defers only MCP/plugin tools — all 17 tools on the API-server
+  # path are core Hermes tools, which are never deferred. The floor is not
+  # reducible through supported configuration; it would require patching the
+  # installed hermes_cli package.
 
 api_server:
   enabled: true

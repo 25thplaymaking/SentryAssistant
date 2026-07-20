@@ -47,6 +47,20 @@ services:
       API_SERVER_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
       API_SERVER_HOST: 0.0.0.0
       API_SERVER_PORT: "8642"
+      # Inference provider credentials. Without this passthrough the keys sit in
+      # .env and never reach the process, and every turn fails with
+      # "No inference provider configured" — the .env entry alone is not enough.
+      #
+      # All are optional so a provider switch is a config change, not a compose
+      # edit. Which one is ACTIVE is decided by `model.provider` in
+      # hermes/config.yaml, which outranks env autodetection in Hermes'
+      # resolve_provider() chain. Do not rely on autodetection: a bare
+      # OPENAI_API_KEY with no pinned provider resolves to "openrouter",
+      # not native OpenAI.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes:
       # One writable runtime data directory per profile. Never shared.
       - ./data/hermes/personal:/home/hermes/.hermes
