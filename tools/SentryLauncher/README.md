@@ -50,6 +50,18 @@ Scriptable — `Sentry --check` is a health probe.
 - `/health/ready` answers **503** when the runtime is degraded, and that body
   carries the diagnosis. The launcher reads the body regardless of status code —
   treating non-2xx as failure would report a runtime outage as a tunnel outage.
-- Set `SENTRY_APP_PATH` to override where `SentryAssistant.exe` is found.
+- **The app is MSIX-packaged and cannot be started from its exe.** WinUI 3
+  needs package identity; launching `bin/.../SentryAssistant.exe` directly dies
+  immediately with `0xE0434352`. Worse, `Process.Start` reports success anyway,
+  so a launcher that starts the exe claims it opened the app while nothing
+  appears. The launcher resolves the AUMID and starts it through
+  `shell:AppsFolder`, registering the loose build first if Windows does not
+  know about it yet (a fresh clone or a clean build is always in that state).
+  Registering a loose layout requires Developer Mode.
+- After launching, the launcher waits for a `SentryAssistant` process to exist
+  before reporting success — the shell reports success whether or not the app
+  survived startup, so without that check it would keep claiming victory over a
+  window that never opened.
+- Set `SENTRY_APP_MANIFEST` to override where `AppX/AppxManifest.xml` is found.
   Otherwise the launcher looks beside itself, then walks up to six levels for a
   `bin/x64/{Debug,Release}/...` build.

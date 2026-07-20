@@ -126,7 +126,14 @@ internal static class Program
         // 4. Desktop app. Resolved even under --check so the check exercises
         //    the same lookup the real launch uses — a check that skipped it
         //    would report all-clear right up until the moment it matters.
-        var app = FindApp();
+        //
+        //    This is an MSIX-packaged WinUI 3 app, so it needs package
+        //    identity to run at all. Starting the loose exe under bin/ dies
+        //    instantly with 0xE0434352 (a CLR unhandled exception) because
+        //    WinUI cannot initialise without identity -- and Process.Start
+        //    still reports success, so a launcher that starts the exe claims
+        //    it opened the app while nothing appears. Launch by AUMID instead.
+        var app = FindManifest();
 
         if (check)
         {
@@ -154,20 +161,20 @@ internal static class Program
         }
 
         Step("Desktop", "starting…", ConsoleColor.Green);
-        try
+
+        var aumid = ResolveAumid(app);
+        if (aumid is null)
         {
-            // WorkingDirectory matters: WinUI resolves its resources relative
-            // to the executable, and launching from elsewhere fails oddly.
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = app,
-                WorkingDirectory = Path.GetDirectoryName(app)!,
-                UseShellExecute = true,
-            });
+            Fail("Could not register or resolve the app package.",
+                 "Developer Mode must be on to register a loose build.",
+                 $"Try by hand:  Add-AppxPackage -Register '{app}'");
+            return 4;
         }
-        catch (Exception ex)
+
+        if (!LaunchByAumid(aumid))
         {
-            Fail($"Could not start the app: {ex.Message}");
+            Fail("The package launched but no window appeared.",
+                 $"Try by hand:  explorer.exe shell:AppsFolder\\{aumid}");
             return 4;
         }
 
@@ -312,15 +319,15 @@ internal static class Program
         return false;
     }
 
-    private static string? FindApp()
+    private static string? FindManifest()
     {
         // An explicit override wins, so an install that lives anywhere still works.
-        var env = Environment.GetEnvironmentVariable("SENTRY_APP_PATH");
+        var env = Environment.GetEnvironmentVariable("SENTRY_APP_MANIFEST");
         if (!string.IsNullOrWhiteSpace(env) && File.Exists(env)) return env;
 
-        // Next to the launcher, so a published bundle is self-contained.
+        // Beside the launcher, so a published bundle is self-contained.
         var here = AppContext.BaseDirectory;
-        var beside = Path.Combine(here, "SentryAssistant.exe");
+        var beside = Path.Combine(here, "AppX", "AppxManifest.xml");
         if (File.Exists(beside)) return beside;
 
         // Otherwise walk up looking for the development build output. Walking
@@ -335,12 +342,109 @@ internal static class Program
             {
                 var candidate = Path.Combine(
                     dir.FullName, "bin", "x64", config,
-                    "net10.0-windows10.0.26100.0", "win-x64", "SentryAssistant.exe");
+                    "net10.0-windows10.0.26100.0", "win-x64", "AppX", "AppxManifest.xml");
                 if (File.Exists(candidate)) return candidate;
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Get the launchable AUMID for the app, registering the loose build first
+    /// if Windows does not know about it yet. A freshly-built or freshly-cloned
+    /// tree has no package registered, which is the state that makes the app
+    /// silently refuse to open.
+    /// </summary>
+    private static string? ResolveAumid(string manifestPath)
+    {
+        string? packageName;
+        try
+        {
+            var doc = System.Xml.Linq.XDocument.Load(manifestPath);
+            packageName = doc.Root?
+                .Elements().FirstOrDefault(e => e.Name.LocalName == "Identity")?
+                .Attribute("Name")?.Value;
+        }
+        catch
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(packageName)) return null;
+
+        var family = QueryPackageFamily(packageName);
+        if (family is null)
+        {
+            // Not registered yet. Registering a loose layout needs Developer
+            // Mode; if that is off this fails and the caller says so.
+            RunPowerShell($"Add-AppxPackage -Register '{manifestPath}' -ErrorAction Stop");
+            family = QueryPackageFamily(packageName);
+        }
+
+        return family is null ? null : $"{family}!App";
+    }
+
+    private static string? QueryPackageFamily(string packageName)
+    {
+        var output = RunPowerShell(
+            $"(Get-AppxPackage -Name '{packageName}' -ErrorAction SilentlyContinue).PackageFamilyName");
+        var family = output?.Trim();
+        return string.IsNullOrWhiteSpace(family) ? null : family;
+    }
+
+    /// <summary>
+    /// Launch by AUMID via the shell, then confirm a process actually exists.
+    /// The confirmation is the point: the shell reports success regardless of
+    /// whether the app survived startup, so without it the launcher would keep
+    /// claiming victory over a window that never opened.
+    /// </summary>
+    private static bool LaunchByAumid(string aumid)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"shell:AppsFolder\\{aumid}",
+                UseShellExecute = true,
+            });
+        }
+        catch
+        {
+            return false;
+        }
+
+        for (var waited = 0; waited < 20; waited++)
+        {
+            Thread.Sleep(500);
+            if (Process.GetProcessesByName("SentryAssistant").Length > 0) return true;
+        }
+        return false;
+    }
+
+    private static string? RunPowerShell(string command)
+    {
+        try
+        {
+            var p = Process.Start(new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{command}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            });
+            if (p is null) return null;
+            var output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(90_000);
+            return output;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string TunnelLogPath() => Path.Combine(
