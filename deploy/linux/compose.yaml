@@ -64,6 +64,15 @@ services:
     volumes:
       # One writable runtime data directory per profile. Never shared.
       - ./data/hermes/personal:/home/hermes/.hermes
+      # The agent's work area. Sessions default their workspace to /workspace
+      # (see HERMES_WEBUI_DEFAULT_WORKSPACE on the webui service), and the agent
+      # executes here — so without a mount, anything it writes lives only in the
+      # container's writable layer and is destroyed by the next `up -d` recreate.
+      # This is a work area, NOT part of $HERMES_HOME, so sharing it with the
+      # webui below does not cross the skills/config/memory boundary that keeps
+      # ./data/hermes/personal unshared. Bound into the webui at the same path so
+      # the session metadata is true in both environments.
+      - ./data/workspace:/workspace
     # Deliberately no `ports:` block. Only the Gateway may reach the runtime.
     expose:
       - "8642"
@@ -142,6 +151,16 @@ services:
       HERMES_HOME: /home/hermes/.hermes
       HERMES_WEBUI_STATE_DIR: /home/hermes/.hermes/webui
 
+      # The default workspace every new session is stamped with. Pinned here so
+      # it is declarative — a fresh deploy with an empty data dir resolves to
+      # /workspace by config, not by falling through to ~/workspace. An explicit
+      # env value also outranks whatever settings.json has stored (config.py
+      # honours the env var over persisted config for exactly this Docker case),
+      # so the value cannot drift. /workspace exists in this container (the image
+      # creates it) and is bound to the same persisted host dir as the hermes
+      # service, so what the UI reports and what the agent uses are one place.
+      HERMES_WEBUI_DEFAULT_WORKSPACE: /workspace
+
       HERMES_WEBUI_HOST: 0.0.0.0
       HERMES_WEBUI_PORT: "8787"
       # Bound to the container interface, published to loopback only (below).
@@ -149,6 +168,11 @@ services:
       HERMES_WEBUI_PASSWORD: ${WEBUI_PASSWORD:?WEBUI_PASSWORD is required}
     volumes:
       - ./data/webui/home:/home/hermes/.hermes
+      # Same persisted work area the hermes service mounts. The WebUI is
+      # gateway-backed and does not execute the agent, so it does no file work
+      # here itself — but sharing the mount means the workspace the UI names is
+      # the workspace the agent actually writes to, not a divergent empty dir.
+      - ./data/workspace:/workspace
     ports:
       # Loopback only, same rule as the Gateway. Reached over the SSH tunnel;
       # never published to a public interface.
