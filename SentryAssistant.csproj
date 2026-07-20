@@ -15,6 +15,23 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!--
+    tools/ holds standalone operator projects with their own csproj and their
+    own Main. SDK-style globbing sweeps **/*.cs regardless of what the solution
+    references, so without this the launcher's Program.cs and the assembly
+    attributes generated into its obj/ are compiled into the app — producing a
+    duplicate entry point and a wall of CS0579 "duplicate attribute" errors.
+    Excluding it from every item group is what actually keeps the two apart.
+  -->
+  <ItemGroup>
+    <Compile Remove="tools\**" />
+    <Page Remove="tools\**" />
+    <None Remove="tools\**" />
+    <Content Remove="tools\**" />
+    <EmbeddedResource Remove="tools\**" />
+    <ApplicationDefinition Remove="tools\**" />
+  </ItemGroup>
+
   <ItemGroup>
     <Content Include="Assets\SplashScreen.scale-200.png" />
     <Content Include="Assets\LockScreenLogo.scale-200.png" />

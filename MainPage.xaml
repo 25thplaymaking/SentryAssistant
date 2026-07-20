@@ -450,15 +450,15 @@
                                         <TextBlock x:Name="Step2State" Grid.Column="1" Text="BLOCKED"
                                                    Style="{StaticResource SentryMonoMetaTextStyle}" />
                                     </Grid>
-                                    <TextBlock Text="Redeem a one-time code so this desktop gets its own revocable credentials."
+                                    <TextBlock Text="This desktop gets its own revocable credential, sealed to this Windows account."
                                                Foreground="{ThemeResource SentryTextSecondaryBrush}" TextWrapping="Wrap" FontSize="12" />
                                     <TextBlock Style="{StaticResource SentryMonoMetaTextStyle}" TextWrapping="Wrap"
-                                               Text="Generate one on the control plane: scripts/bootstrap_device.py --display-name &quot;Bryce&quot; --device-kind desktop" />
+                                               Text="Enrol requests a code over SSH and redeems it for you. Leave the box empty unless you already hold one." />
                                     <Grid ColumnSpacing="8">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <TextBox x:Name="SetupCodeBox" PlaceholderText="XXXX-XXXX-XXXX"
+                                        <TextBox x:Name="SetupCodeBox" PlaceholderText="Optional — paste a code only if you have one"
                                                  Style="{StaticResource SentryTextBoxStyle}"
-                                                 AutomationProperties.Name="Enrolment code" />
+                                                 AutomationProperties.Name="Enrolment code (optional)" />
                                         <Button x:Name="Step2Button" Grid.Column="1" Content="Enrol" MinWidth="80"
                                                 IsEnabled="False" Style="{StaticResource SentryPrimaryButtonStyle}"
                                                 Click="SetupStep2_Click" />

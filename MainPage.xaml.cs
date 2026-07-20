@@ -19,6 +19,7 @@ namespace SentryAssistant;
 public sealed partial class MainPage : Page
 {
     private readonly SettingsService _settings = new();
+    private readonly DeviceEnrolmentService _enrolment = new();
     private readonly MicrophoneService _microphone = new();
     private readonly MediaPlayer _player = new();
     private OpenAIService? _openAI;
@@ -218,11 +219,31 @@ public sealed partial class MainPage : Page
     {
         if (_gateway is null) return;
 
+        // A code typed by hand wins. Someone who pasted one is mid-recovery, or
+        // holding a code minted somewhere this machine cannot reach, and
+        // silently ignoring it to mint a different one would be baffling.
         var code = SetupCodeBox.Text.Trim();
+
         if (string.IsNullOrWhiteSpace(code))
         {
-            SetSetupStep(SetupStepId.EnrolDevice, SetupStepState.Failed, "Enter the enrolment code.");
-            return;
+            SetSetupStep(SetupStepId.EnrolDevice, SetupStepState.Working, "Requesting a code...");
+
+            var (minted, mintedCode, mintDetail) = await _enrolment.MintCodeAsync(
+                _settings.Settings.GatewayTunnelTarget,
+                Environment.MachineName);
+
+            if (!minted || string.IsNullOrWhiteSpace(mintedCode))
+            {
+                // Failing here is not a dead end: the code box below still
+                // works, so say that rather than leaving the step just "Failed".
+                SetSetupStep(
+                    SetupStepId.EnrolDevice,
+                    SetupStepState.Failed,
+                    $"{mintDetail} You can still paste a code below.");
+                return;
+            }
+
+            code = mintedCode;
         }
 
         SetSetupStep(SetupStepId.EnrolDevice, SetupStepState.Working, "Redeeming code...");
