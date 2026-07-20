@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Frontir Sentry desktop shell.
+
+    OutputType WinExe is the whole point of this project: a Windows subsystem
+    binary never allocates a console, so nothing flashes on launch. The previous
+    path (a Scheduled Task running powershell.exe -WindowStyle Hidden) cannot
+    achieve that — powershell.exe allocates a console *before* the window style
+    is applied, so every logon and every reconnect flashed a window.
+
+    Deliberately NOT packaged (no MSIX). It needs no package identity, so it
+    runs from a plain publish folder with no registration step and none of the
+    AUMID launch handling the packaged app requires.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>SentryShell</RootNamespace>
+    <AssemblyName>FrontirSentry</AssemblyName>
+    <ApplicationIcon>frontir.ico</ApplicationIcon>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- The app is a thin host; publishing self-contained would quadruple it
+         for no gain, and .NET 10 is already installed on the target box. -->
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3351.48" />
+  </ItemGroup>
+
+</Project>
