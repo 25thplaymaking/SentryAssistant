@@ -112,6 +112,19 @@ services:
       # exists — which the desktop shell then mirrors into its title bar. Left
       # unset, the app window reads "Hermes — Sign in".
       HERMES_WEBUI_BOT_NAME: Sentry
+      # The first-run wizard probes for an IN-PROCESS Hermes: it imports
+      # run_agent and looks for $HERMES_HOME/config.yaml inside this container.
+      # Neither exists here by design — this container never loads the agent, it
+      # speaks to the hermes container over the network (see CHAT_BACKEND below).
+      # So the wizard reports "agent_unavailable" on a deployment where chat
+      # works fine, and blocks first load with a setup flow that would write a
+      # local config nothing reads.
+      #
+      # This override is the documented escape hatch for pre-configured
+      # deployments; onboarding.py honours it unconditionally and, once set,
+      # refuses to overwrite operator config even if the wizard is reached
+      # anyway by a stale bundle.
+      HERMES_WEBUI_SKIP_ONBOARDING: "1"
       HERMES_WEBUI_CHAT_BACKEND: gateway
       HERMES_WEBUI_GATEWAY_BASE_URL: http://hermes:8642
       HERMES_WEBUI_GATEWAY_API_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
