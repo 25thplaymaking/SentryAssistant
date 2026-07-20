@@ -90,6 +90,16 @@ production stack.
 `.env` and `deploy/linux/data/` (24MB of live container state) are gitignored
 and must never be committed.
 
+**The agent's workspace is `deploy/linux/data/workspace`**, mounted at
+`/workspace` into both the hermes and webui containers (owner `1000:1000`).
+Sessions default their workspace to `/workspace`
+(`HERMES_WEBUI_DEFAULT_WORKSPACE`), the agent executes there, and because it is
+a bind mount its file work survives a `docker compose up -d` recreate. It is a
+*work* area, deliberately outside `$HERMES_HOME`, so the shared mount does not
+breach the skills/config/memory boundary that keeps `data/hermes/personal`
+unshared. Before it existed, `/workspace` was present only in the webui image,
+not hermes, so the agent was stamped with a workspace it could not find.
+
 ---
 
 ## 4. What was built (2026-07-20)
