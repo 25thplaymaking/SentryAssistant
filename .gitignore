@@ -10,6 +10,9 @@ obj/
 # Test and publish output
 TestResults/
 coverage/
+
+# Launcher publish output — rebuilt from source, never committed
+tools/SentryLauncher/dist/
 artifacts/
 AppPackages/
 BundleArtifacts/
