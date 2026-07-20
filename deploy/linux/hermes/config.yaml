@@ -31,12 +31,32 @@ model:
 memory:
   # Durable memories are proposed, then shown to the profile's owner before they
   # are committed. Nothing is written silently.
+  #
+  # Kept ON deliberately, even though skills below are now ungated. These are
+  # separate subsystems with different risk: memory is what shapes the
+  # assistant's long-term behaviour, so a review queue earns its keep here in a
+  # way it does not for skills.
   write_approval: true
 
 skills:
-  # Agent-authored skills stay inactive until a human reviews the full diff.
-  write_approval: true
-  guard_agent_created: true
+  # Ungated as of 2026-07-20. The earlier comment here claimed agent-authored
+  # skills "stay inactive until a human reviews the full diff" — that was wrong.
+  # guard_agent_created runs a regex SCANNER (exfiltration / injection /
+  # destructive / persistence / network / obfuscation), not a diff review.
+  #
+  # Off because the agent already has terminal, execute_code, write_file and
+  # patch in its active toolset, so it can run the same code without passing a
+  # skill through the scanner. Guarding the door beside an open window buys
+  # friction, not security. Hermes ships both off by default for this reason.
+  #
+  # NOTE: externally-sourced skills are still scanned regardless — these flags
+  # only affect agent-authored ones. Registry downloads keep the full
+  # builtin/trusted/community trust policy, community blocked on any finding.
+  #
+  # Accepted residual risk: a terminal command runs once, a skill persists and
+  # auto-loads into every later session. Lower risk than it sounds, not zero.
+  write_approval: false
+  guard_agent_created: false
 
 tools:
   # Explicit toolset rather than "whatever is available", so a runtime upgrade

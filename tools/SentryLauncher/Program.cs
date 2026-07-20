@@ -22,6 +22,7 @@ internal static class Program
     // Using 127.0.0.1 here yields a live tunnel and an app that reports
     // offline with no useful error.
     private const string GatewayUrl = "http://[::1]:8090";
+    private const string WebUiUrl = "http://[::1]:8787";
     private const string TunnelTask = "SentryGatewayTunnel";
     private const string SshTarget = "bishop@205.209.116.114";
     private const string RemoteComposeDir = "/srv/sentry/repo/deploy/linux";
@@ -123,7 +124,30 @@ internal static class Program
             Step("Hermes", $"healthy (v{health.Value.RuntimeVersion})", ConsoleColor.Green);
         }
 
-        // 4. Desktop app. Resolved even under --check so the check exercises
+        // 4. WebUI. Checked after the runtime because it depends on it, and
+        //    reported separately because a healthy Hermes behind a dead WebUI
+        //    is a different problem from a dead Hermes.
+        var webui = await WebUiReachable();
+        Step("WebUI", webui ? "ready" : "unreachable",
+             webui ? ConsoleColor.Green : ConsoleColor.Yellow);
+
+        if (!webui)
+        {
+            if (repair && await Repair() && await WebUiReachable())
+            {
+                Step("WebUI", "recovered", ConsoleColor.Green);
+            }
+            else
+            {
+                // Deliberately NOT fatal. The desktop app talks to the Gateway,
+                // not the WebUI, so a dead WebUI must not block launching it —
+                // it only costs the browser/phone surface.
+                Console.WriteLine("            browser + phone surface unavailable;"
+                                  + " the desktop app is unaffected");
+            }
+        }
+
+        // 5. Desktop app. Resolved even under --check so the check exercises
         //    the same lookup the real launch uses — a check that skipped it
         //    would report all-clear right up until the moment it matters.
         //
@@ -149,7 +173,12 @@ internal static class Program
                 return 4;
             }
 
-            Ok("All layers healthy. (--check: not opening the app.)");
+            // Do not claim "all healthy" while a layer is reported unreachable
+            // above. A summary that contradicts the lines it summarises trains
+            // the reader to stop believing it.
+            Ok(webui
+                ? "All layers healthy. (--check: not opening the app.)"
+                : "Core healthy; WebUI down. (--check: not opening the app.)");
             return 0;
         }
 
@@ -244,6 +273,25 @@ internal static class Program
     /// outage.
     /// </summary>
     private static async Task<bool> GatewayReachable() => await ReadHealth() is not null;
+
+    /// <summary>
+    /// Whether the WebUI answers. Deliberately hits an endpoint that responds
+    /// WITHOUT credentials — /api/auth/status reports whether auth is enabled
+    /// and is reachable when logged out. Probing an authenticated endpoint
+    /// would return 401 on a perfectly healthy service and report it as down.
+    /// </summary>
+    private static async Task<bool> WebUiReachable()
+    {
+        try
+        {
+            using var response = await Http.GetAsync($"{WebUiUrl}/api/auth/status");
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            return false;
+        }
+    }
 
     private static bool StartTunnel()
     {

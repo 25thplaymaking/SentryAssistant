@@ -218,9 +218,9 @@ Sentry contributes only what Hermes lacks. The revised verdicts:
 | # | Capability | Winner | Action |
 |---|---|---|---|
 | 1 | Authentication / teams | **Sentry** *(explicit exception)* | Gateway owns identity. Bridge webui auth to Gateway device sessions; retire the shared password. |
-| 2 | Skills editing | **Hermes** | Keep inline editing. Drop the Sentry gating requirement. |
+| 2 | Skills editing | **Hermes** | **APPLIED 2026-07-20.** `skills.write_approval: false`, `skills.guard_agent_created: false`. **`memory.write_approval` stays TRUE** — separate subsystem, different risk. See §10. |
 | 3 | Profiles | **Hermes** | Retire Sentry's profile concept; keep `SENTRY_BOOTSTRAP_PROFILE_*` only as the Hermes profile it maps to. |
-| 4 | Scheduling | **Hermes** | Adopt Hermes cron. Retire Sentry's reminder scheduler. **Verify first** that cron covers DST-correct recurrence — if it does not, that capability is a gap, not a duplicate. |
+| 4 | Scheduling | **SPLIT** *(revised 2026-07-20 after measurement — see §10)* | Hermes cron for agent jobs. **KEEP** `app/reminders/schedule.py` for anything user-facing: Hermes schedules via `croniter`, which is **not DST-correct** — a daily 09:00 job fires twice on spring-forward day, once an hour early. Not an overlap; a capability Hermes lacks. |
 | 5 | Sessions vs work orders | **Hermes for sessions** | Keep work orders ONLY for execution-node dispatch, which Hermes has no equivalent for. |
 | 6 | Workspace browser | **Hermes** | Keep Hermes' browser. `Sentry.Node`'s workspace registry survives only as the host-side half of execution routing. Label the host on every view. |
 | 7 | Voice | **Hermes** | Adopt Web Speech input. Retire Sentry's `MicrophoneService`/TTS unless the speak-only-verified-resolution policy is still wanted. |
@@ -246,3 +246,68 @@ work orders — behind a Hermes-native front end.
 | WebUI tools run in the WebUI container (#681) | Gateway-backed chat routes execution to Hermes; verify per feature, don't assume |
 | Push on iOS is weaker than APNs | Requires installed PWA on 16.4+; if that proves insufficient, native is a separate project |
 | Fork drifts into an unmaintainable rewrite | Prefer extension APIs (`registerHermesSkin`) and additive files over editing core |
+
+---
+
+## 10. Measured findings — 2026-07-20
+
+Two §8 decisions were researched against the running systems rather than
+reasoned about. One held; one did not.
+
+### 10.1 Scheduling — Hermes cron is NOT DST-correct
+
+Two facts, both measured:
+
+**Sentry's reminders were never wired up.** `app/reminders/schedule.py` is 147
+tested lines that nothing imports — no route, no table, no firing loop. The
+original commit described intent that was never completed. So retiring it would
+not have removed a shipped feature.
+
+**Hermes cron has a real recurrence bug.** It schedules via `croniter`. Running
+`0 9 * * *` across US spring-forward 2026, inside the Hermes container:
+
+```
+2026-03-07T09:00-05:00   local_hour=09
+2026-03-08T08:00-04:00   local_hour=08   UTC_gap=22h   <- an hour early
+2026-03-08T09:00-04:00   local_hour=09   UTC_gap=1h    <- fires again
+2026-03-09T09:00-04:00   local_hour=09   UTC_gap=24h
+```
+
+A daily 09:00 job **fires twice on the DST day, once at the wrong time.** The
+same boundary through `next_occurrence()` in the Gateway container:
+
+```
+2026-03-08T09:00-04:00   local_hour=09
+2026-03-09T09:00-04:00   local_hour=09   UTC_gap=24h
+2026-03-10T09:00-04:00   local_hour=09   UTC_gap=24h
+```
+
+**Decision:** keep `schedule.py`. It is not an overlap — it is the only correct
+wall-clock recurrence in either codebase, it is already written and tested, and
+retaining it costs nothing. Practical impact of the bug if adopted wholesale:
+the morning brief arrives at 08:00 *and* 09:00, twice a year.
+
+### 10.2 Skills — ungating is sound; memory is a separate decision
+
+`guard_agent_created` is not a diff review. It runs a **regex scanner**
+(exfiltration / injection / destructive / persistence / network / obfuscation)
+over agent-authored skills. `write_approval` stages writes to
+`<HERMES_HOME>/pending/{memory,skills}/` for out-of-band approval.
+
+Hermes ships both off, and its stated reason applies directly here: the agent
+already has `terminal`, `execute_code`, `write_file` and `patch` in its active
+toolset, so it can run the same code without a skill ever passing the scanner.
+Verified those tools are live in our 17-tool set.
+
+**Still scanned regardless:** externally-sourced skills. These flags only
+affect agent-authored ones; registry downloads keep the full
+builtin/trusted/community policy, community blocked on any finding. Ungating
+does not widen the marketplace attack surface.
+
+**Accepted residual risk:** a terminal command runs once; a skill persists and
+auto-loads into every later session. Transient execution and standing
+capability are not equivalent — the risk is lower than it appears, not zero.
+
+**Applied:** `skills.write_approval: false`, `skills.guard_agent_created: false`.
+**`memory.write_approval` remains true** — memory shapes long-term behaviour,
+and it is a different subsystem from skills.
