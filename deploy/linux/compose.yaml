@@ -94,6 +94,50 @@ services:
       - no-new-privileges:true
     networks: [sentry]
 
+  webui:
+    # The Frontir fork of hermes-webui. Built from a checkout of the fork's
+    # `frontir` branch rather than the upstream image, so the reskin and our
+    # features ship from here without a later migration.
+    build:
+      context: /srv/sentry/webui
+    restart: unless-stopped
+    depends_on: [hermes]
+    environment:
+      # Gateway-backed chat: browser turns are routed to the Hermes API server
+      # instead of importing Hermes in-process. This is what keeps the runtime
+      # boundary intact — the WebUI never loads the agent, it speaks to it.
+      HERMES_WEBUI_CHAT_BACKEND: gateway
+      HERMES_WEBUI_GATEWAY_BASE_URL: http://hermes:8642
+      HERMES_WEBUI_GATEWAY_API_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
+      # Approval cards. Without the runs API the agent can sit on an
+      # approval-capable command with nothing surfaced in the UI to approve it —
+      # which would quietly defeat the point of a governance boundary.
+      HERMES_WEBUI_GATEWAY_USE_RUNS_API: "true"
+
+      # Its OWN home, deliberately not Hermes'. Chat executes on Hermes via the
+      # gateway, but the WebUI's session/skill/memory surfaces read whatever
+      # HERMES_HOME it is given. Sharing Hermes' home would let the WebUI edit
+      # skills inline, which is exactly what skills.write_approval and
+      # guard_agent_created exist to prevent. Revisit deliberately, not by
+      # accident.
+      HERMES_HOME: /home/hermes/.hermes
+      HERMES_WEBUI_STATE_DIR: /home/hermes/.hermes/webui
+
+      HERMES_WEBUI_HOST: 0.0.0.0
+      HERMES_WEBUI_PORT: "8787"
+      # Bound to the container interface, published to loopback only (below).
+      # The password is the second lock, not the first.
+      HERMES_WEBUI_PASSWORD: ${WEBUI_PASSWORD:?WEBUI_PASSWORD is required}
+    volumes:
+      - ./data/webui/home:/home/hermes/.hermes
+    ports:
+      # Loopback only, same rule as the Gateway. Reached over the SSH tunnel;
+      # never published to a public interface.
+      - "127.0.0.1:8787:8787"
+    security_opt:
+      - no-new-privileges:true
+    networks: [sentry]
+
 networks:
   sentry:
     driver: bridge
