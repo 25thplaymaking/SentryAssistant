@@ -152,21 +152,35 @@ Full detail in `docs/2026-07-20-session-report.md`. Summary:
 - **Auto-launch the shell at logon.** Currently manual. A shortcut in
   `shell:startup`, or re-purpose the now-disabled `SentryGatewayTunnel`
   Scheduled Task to launch `FrontirSentry.exe` instead of PowerShell.
-- **Run the full WebUI test suite on grain.silo** and record the baseline.
-  Never run so far, so the pre-existing failure count is unknown. Expect some
-  red from the rebrand (they assert the product is named "Hermes").
+- ~~**Run the full WebUI test suite on grain.silo**~~ — DONE 2026-07-20.
+  **13333 passed, 4 failed, 19 errors, 175 skipped, 2 xfailed, 1 xpassed** in
+  6m33s. The red is attributed, not just recorded: re-running the failing
+  files against the pristine `master` mirror reproduces **1 failure + all 19
+  errors** there untouched (a `git tag` fixture in `test_update_channels.py`
+  failing inside its throwaway repos), so those are upstream/environmental.
+  The other **3 were ours** and are now fixed — all three asserted the product
+  was literally named "Hermes" in copy the rebrand renamed. Re-run
+  `.venv/bin/python -m pytest` on the server; the venv now exists at
+  `/srv/sentry/webui/.venv`.
 - **Light-mode `theme_color`** — the manifest allows one value (`#09090B`), so
   iOS light-theme users get a dark status bar until boot.js re-syncs. Cosmetic,
   first paint only.
 
 ### 6b. Needs a decision from Bryce
 
-- **Voice-session mute.** Muting currently stops the current utterance but a
-  *live voice session* keeps talking. `boot.js` only returns its turn loop to
-  listening from *inside* `_speakResponse()`, so skipping that call would park
-  the session in `thinking` forever. Making mute fully effective means patching
-  `boot.js`'s speak path — a real upstream edit, deliberately not taken
-  unilaterally. **Decide: patch it, or document the limit and move on.**
+- ~~**Voice-session mute.**~~ — DECIDED and shipped 2026-07-20, and the
+  premise above was wrong: it did **not** need a `boot.js` patch.
+  `_speakResponse` is a `function` declaration inside boot.js's IIFE and never
+  reaches `window`, so it cannot be wrapped directly — but it runs its text
+  through `_stripForTTS()`, a plain top-level function in `ui.js` that boot.js
+  resolves through the shared script scope, and bails on an empty result
+  (`if(!clean){ _startListening(); return; }`, boot.js:1714). Gating that
+  global while muted silences the utterance *and* advances the turn loop,
+  along boot.js's own path — fully additive, skin-revert contract intact.
+  Live on `:8787`. Still open, deliberately left: on non-default TTS engines,
+  muting *mid*-utterance calls `stopTTS()` → `audio.pause()`, which never
+  fires `onended` and strands the loop in `speaking`. Unreachable on the
+  default `browser` engine.
 - **Sparse vs full checkout on the server.** `/srv/sentry/repo` is currently a
   full checkout, so the Windows app source sits on the Linux box. Harmless and
   keeps `git pull` simple; can be narrowed to `deploy/` + `server/` if
@@ -205,9 +219,10 @@ curl -s -o /dev/null -w '%{http_code}\n' http://[::1]:8787/login      # 200
 curl -s http://[::1]:8090/health/ready                                # runtime healthy:true
 ```
 
-Last recorded results: harness **34/34**, those two pytest files **52/52**
-(they were 43 passed / 3 failed before today — three tests asserted the product
-was named "Hermes").
+Last recorded results: harness **39/39** (34 before the voice-mute work, which
+added 5 and replaced the assertion encoding the old limitation), those two
+pytest files **52/52**, and the **full suite 13333 passed / 4 failed / 19
+errors** — of which only the 20 upstream/environmental ones remain, see §6a.
 
 ---
 
