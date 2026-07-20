@@ -29,6 +29,24 @@ internal static class Program
     {
         ApplicationConfiguration.Initialize();
 
+        // Provision the app's own areas BEFORE anything reaches for them. On a
+        // fresh end-user machine none of these exist, and the pieces that need
+        // them (the tunnel's log, the WebView2 profile) would otherwise each
+        // create-on-demand in a different code path — so a failure surfaced as
+        // a confusing downstream error instead of one clear message. Do it once,
+        // up front, and refuse to run blind if the root cannot be made.
+        try
+        {
+            AppPaths.EnsureAll();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Frontir Sentry could not create its data folder:\n\n{AppPaths.Root}\n\n{ex.Message}",
+                "Frontir Sentry", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
         var tunnel = new Tunnel();
         var form = BuildWindow(tunnel, out var web, out var status);
         // Disposed when Main returns, which is what removes the icon. Without
@@ -49,12 +67,11 @@ internal static class Program
             try
             {
                 // Persist cookies/localStorage across launches so the login and
-                // the chosen skin survive a restart.
-                var dataDir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "SentryAssistant", "webview2");
-                Directory.CreateDirectory(dataDir);
-                var env = await CoreWebView2Environment.CreateAsync(null, dataDir);
+                // the chosen skin survive a restart. Provisioned at startup by
+                // AppPaths.EnsureAll(); create again here only to be safe if it
+                // was cleared while running.
+                Directory.CreateDirectory(AppPaths.WebView2);
+                var env = await CoreWebView2Environment.CreateAsync(null, AppPaths.WebView2);
                 await web.EnsureCoreWebView2Async(env);
 
                 var core = web.CoreWebView2;
@@ -125,9 +142,7 @@ internal static class Program
 
     private static void OpenLogFolder()
     {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SentryAssistant");
-        try { Process.Start(new ProcessStartInfo(dir) { UseShellExecute = true }); } catch { }
+        try { Process.Start(new ProcessStartInfo(AppPaths.Root) { UseShellExecute = true }); } catch { }
     }
 
     private static void RestoreFromTray(Form form)

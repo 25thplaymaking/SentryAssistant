@@ -41,11 +41,11 @@ internal sealed class Tunnel : IDisposable
 
     internal Tunnel()
     {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SentryAssistant");
-        Directory.CreateDirectory(dir);
-        _log = Path.Combine(dir, "shell.log");
-        _pidFile = Path.Combine(dir, "tunnel.pid");
+        // Areas are provisioned once at startup (AppPaths.EnsureAll); create the
+        // root again here so a Tunnel is still safe to construct on its own.
+        Directory.CreateDirectory(AppPaths.Root);
+        _log = AppPaths.ShellLog;
+        _pidFile = AppPaths.PidFile;
         if (!_job.Ready) Log("WARNING: job object unavailable; ssh will only be cleaned up on graceful exit");
         ReapOrphan();
     }
