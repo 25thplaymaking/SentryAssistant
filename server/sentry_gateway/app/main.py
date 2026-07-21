@@ -91,6 +91,7 @@ async def lifespan(app: FastAPI):
     # profiles unroutable (routing fails closed at turn time), so it must never
     # crash startup.
     runtime = app.state.runtime
+    app.state.endpoint_cipher = None
     if (
         app.state.pool is not None
         and settings.has_runtime_enc_key
@@ -98,6 +99,10 @@ async def lifespan(app: FastAPI):
     ):
         try:
             cipher = EndpointCipher(settings.runtime_enc_key)
+            # Kept on app.state so a profile provisioned AFTER startup can have
+            # its endpoint loaded on demand at turn time, instead of needing a
+            # Gateway restart that is easy to forget (`compose up -d` no-ops).
+            app.state.endpoint_cipher = cipher
             await register_persisted_endpoints(runtime, app.state.pool, cipher)
         except Exception:
             # A bad key or malformed row must not take the whole Gateway down;

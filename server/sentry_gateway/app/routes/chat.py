@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..agent_runtime.base import RuntimeEvent, RuntimeTurn, SessionScope
+from ..agent_runtime.endpoints import refresh_profile_endpoint
 from ..agent_runtime.hermes import UnknownProfileError
 from ..audit.service import AuditEvent, AuditService, Decision
 from .deps import Caller, require_caller
@@ -45,6 +46,24 @@ def _sse(event: RuntimeEvent) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
+
+async def _load_endpoint_on_demand(request: Request, runtime, profile_id) -> bool:
+    """Try to register a profile provisioned since startup. Never raises.
+
+    Returns True only when this profile's own persisted endpoint was found and
+    registered, so an exception, a missing pool, or an absent encryption key all
+    leave routing exactly as fail-closed as before.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    cipher = getattr(request.app.state, "endpoint_cipher", None)
+    if pool is None or cipher is None or not hasattr(runtime, "register"):
+        return False
+    try:
+        return await refresh_profile_endpoint(runtime, pool, cipher, profile_id)
+    except Exception:
+        return False
+
+
 @router.post("/turn")
 async def chat_turn(
     body: ChatTurnRequest,
@@ -62,10 +81,24 @@ async def chat_turn(
             caller.profile_id, SessionScope(profile_id=caller.profile_id)
         )
     except UnknownProfileError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No agent runtime is provisioned for this profile.",
-        ) from exc
+        # The caller may have been provisioned after this process started:
+        # endpoints are otherwise read only at boot. Load THIS profile's own
+        # persisted row and retry once. Still fail-closed -- a profile with no
+        # row stays unroutable and never falls through to another agent.
+        if not await _load_endpoint_on_demand(request, runtime, caller.profile_id):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No agent runtime is provisioned for this profile.",
+            ) from exc
+        try:
+            session = await runtime.create_session(
+                caller.profile_id, SessionScope(profile_id=caller.profile_id)
+            )
+        except UnknownProfileError as exc2:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No agent runtime is provisioned for this profile.",
+            ) from exc2
 
     session_id = body.session_id or session.session_id
 

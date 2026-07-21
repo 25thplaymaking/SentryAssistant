@@ -86,3 +86,43 @@ async def register_persisted_endpoints(
         runtime.register(instance)
         count += 1
     return count
+
+
+#: Single-profile variant of `_FETCH_SQL`, used to make a profile provisioned
+#: after startup routable without restarting the Gateway.
+_FETCH_ONE_SQL = """
+    SELECT profile_id, base_url, profile_name, api_key_encrypted
+    FROM runtime_endpoints
+    WHERE runtime_name = $1 AND profile_id = $2
+"""
+
+
+async def refresh_profile_endpoint(
+    runtime: HermesRuntime,
+    pool,
+    cipher: EndpointCipher,
+    profile_id: UUID,
+    *,
+    runtime_name: str = "hermes",
+) -> bool:
+    """Load and register one profile's persisted endpoint on demand.
+
+    Endpoints are otherwise read only at startup, so a teammate provisioned
+    afterwards stayed unroutable (503) until the Gateway was hard-restarted --
+    and `docker compose up -d` silently no-ops when no config changed, so that
+    restart was easy to miss. Callers use this on an `UnknownProfileError` to
+    pick up a newly provisioned profile.
+
+    Routing stays fail-closed: only a row belonging to `profile_id` itself is
+    registered, so a profile with no persisted endpoint remains unroutable and
+    never falls through to somebody else's agent. Returns True if it registered.
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_FETCH_ONE_SQL, runtime_name, profile_id)
+    wanted = _as_uuid(profile_id)
+    for instance in instances_from_rows(rows or [], cipher):
+        # Defence in depth: never trust the row to be the one we asked for.
+        if instance.profile_id == wanted:
+            runtime.register(instance)
+            return True
+    return False

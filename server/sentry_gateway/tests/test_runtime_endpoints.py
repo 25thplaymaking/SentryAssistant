@@ -15,6 +15,7 @@ from cryptography.fernet import Fernet
 from app.agent_runtime.endpoints import (
     EndpointCipher,
     instances_from_rows,
+    refresh_profile_endpoint,
     register_persisted_endpoints,
 )
 from app.agent_runtime.hermes import HermesInstance, HermesRuntime, UnknownProfileError
@@ -119,3 +120,52 @@ class TestRegisterPersistedEndpoints:
         await register_persisted_endpoints(runtime, FakePool(rows), cipher)
         assert runtime._instance(PROFILE_A).api_key == "key-a"
         assert runtime._instance(PROFILE_B).api_key == "boot"
+
+
+class TestRefreshProfileEndpoint:
+    """A teammate provisioned AFTER startup must become routable without a restart.
+
+    Endpoints were loaded only at boot, so provisioning a teammate and then
+    chatting returned 503 "No agent runtime is provisioned for this profile"
+    until someone remembered to hard-restart the Gateway -- and `compose up -d`
+    silently no-ops when nothing changed, so the restart often didn't happen.
+    Loading the caller's OWN row on demand fixes that while keeping routing
+    fail-closed: only a profile with its own persisted row becomes routable.
+    """
+
+    async def test_profile_provisioned_after_startup_becomes_routable(self):
+        cipher = EndpointCipher(KEY)
+        runtime = HermesRuntime()
+        with pytest.raises(UnknownProfileError):
+            runtime._instance(PROFILE_A)
+
+        pool = FakePool([_row(PROFILE_A, "http://hermes-a:8642", "sentry-a", "key-a", cipher)])
+        loaded = await refresh_profile_endpoint(runtime, pool, cipher, PROFILE_A)
+
+        assert loaded is True
+        assert runtime._instance(PROFILE_A).base_url == "http://hermes-a:8642"
+
+    async def test_unprovisioned_profile_stays_unroutable(self):
+        """Fail-closed is preserved: no row means no route, not a fallback."""
+        cipher = EndpointCipher(KEY)
+        runtime = HermesRuntime()
+
+        loaded = await refresh_profile_endpoint(runtime, FakePool([]), cipher, PROFILE_B)
+
+        assert loaded is False
+        with pytest.raises(UnknownProfileError):
+            runtime._instance(PROFILE_B)
+
+    async def test_never_registers_a_different_profile_than_asked_for(self):
+        """A stray row must not silently make some OTHER profile routable."""
+        cipher = EndpointCipher(KEY)
+        runtime = HermesRuntime()
+        pool = FakePool([_row(PROFILE_B, "http://hermes-b:8642", "sentry-b", "key-b", cipher)])
+
+        loaded = await refresh_profile_endpoint(runtime, pool, cipher, PROFILE_A)
+
+        assert loaded is False
+        with pytest.raises(UnknownProfileError):
+            runtime._instance(PROFILE_A)
+        with pytest.raises(UnknownProfileError):
+            runtime._instance(PROFILE_B)

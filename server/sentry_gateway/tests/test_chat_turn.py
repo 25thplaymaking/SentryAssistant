@@ -38,6 +38,10 @@ class FakeRuntime:
         self.turns: list[tuple[UUID, str]] = []
         self.sessions_created: list[UUID] = []
 
+    def register(self, instance):
+        """Mirrors HermesRuntime.register — a profile becomes routable."""
+        self._known.add(instance.profile_id)
+
     async def create_session(self, profile_id, scope):
         if profile_id not in self._known:
             raise UnknownProfileError(str(profile_id))
@@ -200,3 +204,49 @@ class TestAudit:
         client = build_client(FakeRuntime([PROFILE_A]), pool=pool)
         client.post("/api/chat/turn", json={"prompt": "hi"}, headers=bearer(UNPROVISIONED))
         assert not any("audit_events" in sql for sql, _ in pool.executed)
+
+
+class TestLateProvisioning:
+    """A teammate provisioned after the Gateway booted must not need a restart.
+
+    Endpoints were loaded only at startup, so provisioning someone and then
+    chatting as them returned 503 until the Gateway was hard-restarted -- and
+    `docker compose up -d` no-ops when nothing changed, so that restart was
+    easy to miss (it bit the first live cutover).
+    """
+
+    def test_endpoint_registered_after_startup_is_picked_up(self, monkeypatch):
+        runtime = FakeRuntime([PROFILE_A])  # UNPROVISIONED unknown at boot
+        client = build_client(runtime, FakePool())
+        client.app.state.endpoint_cipher = object()
+
+        async def _fake_refresh(rt, pool, cipher, profile_id, **kw):
+            rt._known.add(profile_id)  # the row exists now
+            return True
+
+        monkeypatch.setattr(chat_routes, "refresh_profile_endpoint", _fake_refresh)
+
+        resp = client.post(
+            "/api/chat/turn", json={"prompt": "hi"}, headers=bearer(UNPROVISIONED)
+        )
+
+        assert resp.status_code == 200
+        assert runtime.sessions_created == [UNPROVISIONED]
+
+    def test_still_fails_closed_when_there_is_no_endpoint_row(self, monkeypatch):
+        runtime = FakeRuntime([PROFILE_A])
+        client = build_client(runtime, FakePool())
+        client.app.state.endpoint_cipher = object()
+
+        async def _fake_refresh(rt, pool, cipher, profile_id, **kw):
+            return False  # genuinely unprovisioned
+
+        monkeypatch.setattr(chat_routes, "refresh_profile_endpoint", _fake_refresh)
+
+        resp = client.post(
+            "/api/chat/turn", json={"prompt": "hi"}, headers=bearer(UNPROVISIONED)
+        )
+
+        assert resp.status_code == 503
+        assert runtime.turns == []
+        assert runtime.sessions_created == []
