@@ -13,7 +13,10 @@ namespace SentryShell;
 internal sealed class Tunnel : IDisposable
 {
     // Loopback-only on the server; reached over the forward, never published.
-    private const string Target      = "bishop@205.209.116.114";
+    // The destination is CONFIGURED, not compiled in: a distributed copy points
+    // at the teammate's own restricted account, never the owner's admin one.
+    private static readonly TunnelConfig Config = TunnelConfig.Load();
+    private static string Target => Config.SshTarget;
     private const string RemoteAddr  = "127.0.0.1";   // loopback on the SERVER, where IPv4 works
     internal const int   GatewayPort = 8090;
     internal const int   WebUiPort   = 8787;
@@ -153,7 +156,7 @@ internal sealed class Tunnel : IDisposable
             CreateNoWindow = true,
             RedirectStandardError = true,
         };
-        foreach (var a in new[]
+        var args = new List<string>
         {
             "-N",
             "-o", "ExitOnForwardFailure=yes",
@@ -161,13 +164,27 @@ internal sealed class Tunnel : IDisposable
             "-o", "ServerAliveCountMax=3",
             "-o", "BatchMode=yes",
             "-o", "StrictHostKeyChecking=accept-new",
-            "-L", $"{BindAddr}:{GatewayPort}:{RemoteAddr}:{GatewayPort}",
-            // Both forwards ride one connection. ExitOnForwardFailure means a
-            // port already in use fails the whole dial rather than silently
-            // bringing up a half-working tunnel.
-            "-L", $"{BindAddr}:{WebUiPort}:{RemoteAddr}:{WebUiPort}",
-            Target,
-        }) psi.ArgumentList.Add(a);
+        };
+        if (!string.IsNullOrWhiteSpace(Config.IdentityFile))
+        {
+            // IdentitiesOnly stops ssh offering every agent key first and
+            // tripping MaxAuthTries before it reaches the one that works.
+            args.Add("-i"); args.Add(Config.IdentityFile);
+            args.Add("-o"); args.Add("IdentitiesOnly=yes");
+        }
+        // The Gateway forward is owner-only. A teammate's key is authorised for
+        // the WebUI port alone, and ExitOnForwardFailure means asking for a port
+        // you may not have would fail the ENTIRE dial, not just that forward.
+        if (Config.ForwardGateway)
+        {
+            args.Add("-L"); args.Add($"{BindAddr}:{GatewayPort}:{RemoteAddr}:{GatewayPort}");
+        }
+        // Both forwards ride one connection. ExitOnForwardFailure also means a
+        // port already in use fails the dial rather than silently bringing up a
+        // half-working tunnel.
+        args.Add("-L"); args.Add($"{BindAddr}:{WebUiPort}:{RemoteAddr}:{WebUiPort}");
+        args.Add(Target);
+        foreach (var a in args) psi.ArgumentList.Add(a);
 
         try
         {
