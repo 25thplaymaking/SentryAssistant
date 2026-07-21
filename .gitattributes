@@ -1,0 +1,9 @@
+# Shell scripts and the Hermes/gateway configs are executed on Linux. Without
+# this, a Windows checkout commits CRLF and the server gets `\r`-terminated
+# lines, which bash reports as a bogus "no such file or directory" on the
+# shebang. Force LF regardless of the platform that wrote them.
+*.sh text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.py text eol=lf
+*.sql text eol=lf
