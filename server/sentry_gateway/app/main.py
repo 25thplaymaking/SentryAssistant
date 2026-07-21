@@ -15,7 +15,11 @@ import asyncpg
 from fastapi import FastAPI, Response, status
 
 from .agent_runtime.base import AgentRuntime
-from .agent_runtime.endpoints import EndpointCipher, register_persisted_endpoints
+from .agent_runtime.endpoints import (
+    EndpointCipher,
+    refresh_profile_endpoint,
+    register_persisted_endpoints,
+)
 from .agent_runtime.hermes import HermesInstance, HermesRuntime
 from .auth.tokens import TokenService
 from .config import Settings, get_settings
@@ -104,6 +108,16 @@ async def lifespan(app: FastAPI):
             # Gateway restart that is easy to forget (`compose up -d` no-ops).
             app.state.endpoint_cipher = cipher
             await register_persisted_endpoints(runtime, app.state.pool, cipher)
+
+            # Let the runtime reload a profile's endpoint mid-turn. Provisioning
+            # rotates a teammate's container key; without this the Gateway keeps
+            # the key it read at boot and every turn is rejected until restart.
+            _pool, _cipher = app.state.pool, cipher
+
+            async def _refresh_endpoint(profile_id) -> bool:
+                return await refresh_profile_endpoint(runtime, _pool, _cipher, profile_id)
+
+            runtime.endpoint_refresher = _refresh_endpoint
         except Exception:
             # A bad key or malformed row must not take the whole Gateway down;
             # the affected profiles simply fail closed when a turn is attempted.

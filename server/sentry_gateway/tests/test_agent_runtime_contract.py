@@ -199,3 +199,78 @@ class TestProjection:
             for title, state in [("a", "assigned"), ("b", "inProgress")]
         }
         assert len(keys) == 1
+
+
+class TestRotatedCredentialSelfHeal:
+    """A re-provisioned teammate must not be locked out until a Gateway restart.
+
+    Re-running provisioning gives the teammate's container a NEW API key and
+    updates the persisted endpoint, but the Gateway already holds that profile
+    in memory with the OLD key. The profile is *known*, so unknown-profile
+    recovery never fires, and every turn fails with the runtime rejecting the
+    key ("API server rejected invalid API key") until someone restarts the
+    Gateway. Observed live after hardening the Stress container.
+    """
+
+    async def test_turn_retries_once_after_refreshing_a_rotated_key(self):
+        seen_keys: list[str | None] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_keys.append(request.headers.get("authorization"))
+            # The stale key is rejected exactly as the Hermes API server does.
+            if request.headers.get("authorization") == "Bearer stale-key":
+                return httpx.Response(401, text="invalid API key")
+            return httpx.Response(200, text="data: [DONE]\n")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        stale = HermesInstance(
+            profile_id=PROFILE, base_url="http://127.0.0.1:8642",
+            api_key="stale-key", profile_name="sentry-stress",
+        )
+        runtime = HermesRuntime({PROFILE: stale}, client=client)
+
+        async def _refresh(profile_id):
+            """Stand-in for reloading the row provisioning just rewrote."""
+            runtime.register(HermesInstance(
+                profile_id=profile_id, base_url="http://127.0.0.1:8642",
+                api_key="fresh-key", profile_name="sentry-stress",
+            ))
+            return True
+
+        runtime.endpoint_refresher = _refresh
+
+        events = [e async for e in runtime.send_turn(turn())]
+        await client.aclose()
+
+        assert seen_keys == ["Bearer stale-key", "Bearer fresh-key"], seen_keys
+        assert events == [] or events is not None
+
+    async def test_auth_failure_still_raises_when_no_fresher_key_exists(self):
+        """Self-heal must not mask a genuinely bad credential."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, text="invalid API key")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        runtime = HermesRuntime({PROFILE: instance()}, client=client)
+
+        async def _refresh(_profile_id):
+            return False  # nothing newer in the database
+
+        runtime.endpoint_refresher = _refresh
+
+        with pytest.raises(httpx.HTTPStatusError):
+            async for _ in runtime.send_turn(turn()):
+                pass
+        await client.aclose()
+
+    async def test_no_refresher_configured_behaves_exactly_as_before(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, text="invalid API key")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        runtime = HermesRuntime({PROFILE: instance()}, client=client)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            async for _ in runtime.send_turn(turn()):
+                pass
+        await client.aclose()

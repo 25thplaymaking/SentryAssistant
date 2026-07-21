@@ -42,20 +42,23 @@ cookies, new laptop, >30 days idle) needs an operator to mint one — acceptable
 
 ```bash
 cd /srv/sentry/repo/deploy/linux
-KEY=$(docker exec sentry-gateway-1 python -c "import secrets;print(secrets.token_hex(24))")
-docker run -d --name sentry-hermes-<slug> --network sentry_sentry \
-  -e API_SERVER_ENABLED=true -e API_SERVER_KEY="$KEY" \
-  -e API_SERVER_HOST=0.0.0.0 -e API_SERVER_PORT=8642 \
-  -e HERMES_HOME=/home/hermes/.hermes \
-  -e OPENAI_API_KEY="$(grep '^OPENAI_API_KEY=' .env | cut -d= -f2-)" \
-  -v /srv/sentry/repo/deploy/linux/data/hermes/<slug>:/home/hermes/.hermes \
-  sentry-hermes
-# seed the home first if /v1 404s: cp -r data/hermes/personal/. data/hermes/<slug>/
-docker exec sentry-gateway-1 python scripts/provision_teammate.py \
-  --display-name "Name" --slug <slug> --hermes-api-key "$KEY"
+./provision-teammate.sh --name "Alice" --slug alice
 ```
-Hand them the code (5-min TTL). **No gateway restart needed** — the endpoint is now
-loaded on demand at first turn.
+
+That is the whole path. It creates the per-user data + workspace dirs at 0700, seeds the
+**governed** teammate config (`memory.write_approval`, `skills.write_approval`,
+`skills.guard_agent_created` all on), starts a hardened container (caps dropped,
+no-new-privileges, memory/CPU/PID limits, `restart unless-stopped`, no published port, no
+docker socket), waits for the agent to actually serve, registers the profile + encrypted
+endpoint, and prints a 5-minute enrollment code. **No gateway restart needed** — the
+endpoint loads on demand at first turn.
+
+> ⚠️ **Never seed a teammate's home by copying `data/hermes/personal/`.** An earlier
+> version of this runbook suggested it. It carries the OWNER's `config.yaml` — whose
+> documented risk acceptance leaves skill governance OFF — into another person's agent,
+> which is precisely the case the scanner exists for. It also risks dragging real personal
+> state across the isolation boundary. `provision-teammate.sh` seeds only the governed
+> config into an empty home; let Hermes initialise the rest.
 
 ## 3. Two traps, both now closed (do not re-open)
 

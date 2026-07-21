@@ -103,6 +103,12 @@ class HermesRuntime(AgentRuntime):
         self._instances: dict[UUID, HermesInstance] = dict(instances or {})
         self._pinned_version = pinned_version
         self._client = client or httpx.AsyncClient(timeout=timeout)
+        #: Optional ``async (profile_id) -> bool`` that reloads a profile's
+        #: persisted endpoint and re-registers it, returning True if it found
+        #: one. Wired at startup. Re-provisioning a teammate rotates their
+        #: container's API key; without this the Gateway keeps using the key it
+        #: read at boot and every turn is rejected until someone restarts it.
+        self.endpoint_refresher: Any | None = None
 
     @property
     def name(self) -> str:
@@ -256,17 +262,43 @@ class HermesRuntime(AgentRuntime):
             "metadata": {"sentry_correlation_id": request.correlation_id},
         }
 
-        async with self._client.stream(
-            "POST",
-            instance.url("/v1/responses"),
-            headers=instance.auth_header,
-            json=payload,
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                event = self._parse_sse_line(line, request)
-                if event is not None:
-                    yield event
+        for attempt in (0, 1):
+            async with self._client.stream(
+                "POST",
+                instance.url("/v1/responses"),
+                headers=instance.auth_header,
+                json=payload,
+            ) as response:
+                # A rotated key (re-provisioned teammate) shows up as 401/403
+                # here, BEFORE any event is yielded, so it is still safe to
+                # reload the endpoint and retry without replaying output.
+                if (
+                    attempt == 0
+                    and response.status_code in (401, 403)
+                    and self.endpoint_refresher is not None
+                ):
+                    await response.aread()  # release the connection before retrying
+                    refreshed = False
+                    try:
+                        refreshed = await self.endpoint_refresher(request.profile_id)
+                    except Exception:
+                        refreshed = False
+                    if refreshed:
+                        reloaded = self._instances.get(request.profile_id)
+                        # Only retry against a genuinely different credential;
+                        # re-sending the same rejected key would just burn a
+                        # second round trip.
+                        if reloaded is not None and reloaded.api_key != instance.api_key:
+                            instance = reloaded
+                            continue
+                # Any other failure — including an auth failure with nothing
+                # newer in the database — must still surface, never be masked.
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    event = self._parse_sse_line(line, request)
+                    if event is not None:
+                        yield event
+            return
 
     def _parse_sse_line(self, line: str, request: RuntimeTurn) -> RuntimeEvent | None:
         line = line.strip()
