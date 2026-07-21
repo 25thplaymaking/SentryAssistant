@@ -21,6 +21,7 @@ from .auth.tokens import TokenService
 from .config import Settings, get_settings
 from .routes import admin as admin_routes
 from .routes import auth as auth_routes
+from .routes import chat as chat_routes
 from .routes import nodes as nodes_routes
 from .routes import teams as teams_routes
 from .routes import workorders as workorders_routes
@@ -119,6 +120,7 @@ app = FastAPI(
 
 app.include_router(admin_routes.router)
 app.include_router(auth_routes.router)
+app.include_router(chat_routes.router)
 app.include_router(nodes_routes.router)
 app.include_router(teams_routes.router)
 app.include_router(workorders_routes.router)
