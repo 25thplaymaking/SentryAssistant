@@ -96,6 +96,11 @@ services:
       SENTRY_HERMES_PINNED_VERSION: ${HERMES_VERSION:-unpinned}
       SENTRY_HERMES_BOOTSTRAP_PROFILE_ID: ${SENTRY_BOOTSTRAP_PROFILE_ID:-}
       SENTRY_HERMES_BOOTSTRAP_PROFILE_NAME: ${SENTRY_BOOTSTRAP_PROFILE_NAME:-sentry-personal}
+      # Fernet key that decrypts persisted per-profile Hermes bearer keys in the
+      # runtime_endpoints table. Held only here (from .env), never in the DB.
+      # Absent -> the gateway registers only the bootstrap profile (current
+      # behaviour); present -> provisioned per-profile endpoints load at startup.
+      SENTRY_RUNTIME_ENC_KEY: ${SENTRY_RUNTIME_ENC_KEY:-}
     ports:
       # Loopback only. Ingress terminates here, never at Hermes.
       - "127.0.0.1:8090:8090"
