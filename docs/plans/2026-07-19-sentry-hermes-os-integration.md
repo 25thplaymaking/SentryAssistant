@@ -55,11 +55,13 @@ lifecycle — **not** filesystem writes to a shared home.
 - [x] **1. Persist profile→endpoint** — `runtime_endpoints` (migration 004), Fernet-encrypted bearer key (`SENTRY_RUNTIME_ENC_KEY`), load+register at startup on top of the bootstrap profile, fail-closed for unregistered profiles. `app/agent_runtime/endpoints.py`. Commit `61ab96f`; 7 new tests, 242 pass.
 - [x] **2. Gateway client chat route** — `POST /api/chat/turn`: authed → `require_caller` → `caller.profile_id` → `AgentRuntime.send_turn`, SSE streamed, one audit event per turn; unregistered/mismatched profile fails closed (503) before any stream; unauth → 401. `app/routes/chat.py`. Commit `cacc2fb`; 8 new tests, 250 pass. (Follow-ups: no `previous_response_id` continuity yet; mid-stream runtime error truncates rather than emitting an error frame.)
 
---- items below touch the LIVE control plane (grain.silo) — checkpoint before running ---
+--- items below touch the LIVE control plane (grain.silo) ---
 
-- [ ] **3. Provision 2nd `sentry-hermes-<user>`** container (own home/port/key); apply migration 004 to the live DB; set `SENTRY_RUNTIME_ENC_KEY`; persist & register both profiles' endpoints.
-- [ ] **4. Fork per-user login + repoint** the fork at `sentry-gateway:8090`, forward the user's Gateway token so chat routes to their agent (replaces the shared password + direct `hermes:8642`).
-- [ ] **5. Exit test** — logged in as A reaches only agent A; as B only agent B; a forged/unregistered profile fails closed. Headless verification on the box.
+- [x] **3. Backend deployed live** (2026-07-21) — migration renamed to `005_runtime_endpoints.sql` and applied to prod Postgres; `SENTRY_RUNTIME_ENC_KEY` generated in-container and stored in `deploy/linux/.env`; `SENTRY_RUNTIME_ENC_KEY` passthrough added to the gateway service; gateway rebuilt + restarted, `/health/ready` healthy, `/api/chat/turn` enforcing 401. Additive: current webui behaviour unchanged. (Permanent per-user `sentry-hermes-<user>` containers are Phase-3 provisioning; slice-1 proved routing with throwaway endpoints.)
+- [ ] **4. Fork per-user login + repoint** the fork at `sentry-gateway:8090`, forward the user's Gateway token so chat routes to their agent (replaces the shared password + direct `hermes:8642`). **← the remaining slice-1 piece; SentryWebUI `frontir` branch.**
+- [x] **5. Exit test PROVEN LIVE** (2026-07-21) — reused two throwaway e2e profiles + two SSE listeners: profile A → `ep-a` (`summary: ok-ep-a`), profile B → `ep-b` (`ok-ep-b`), each listener hit exactly once (no cross-talk), unregistered profile → 503 reaching nothing. Exercised the full path: DB-persisted encrypted endpoint → env-key decrypt → startup registration → per-profile routing → SSE. Torn down clean; gateway healthy.
+
+**Follow-ups noted during the live proof (non-blocking):** a chat turn currently returns a bare 500 if the audit INSERT fails (fail-closed on audit is defensible, but should be a clean error); `deploy/linux/.env` is mode 664 (world-readable) and holds secrets — pre-existing hygiene item; two immutable audit rows from the proof remain (honest artefact, attributed to e2e test users).
 
 Working analysis + as-found evidence: `docs/specs/2026-07-20-multi-tenant-sentry-design.md`
 (subordinate to this plan). Fork state: `docs/2026-07-20-session-report.md`.
