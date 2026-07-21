@@ -35,7 +35,8 @@ services:
     build:
       context: ./hermes
       args:
-        HERMES_VERSION: ${HERMES_VERSION:-latest}
+        # Defaults to the pinned release (see hermes/Dockerfile); .env overrides.
+        HERMES_VERSION: ${HERMES_VERSION:-0.19.0}
         # Match the host owner of ./data so the bind mount is writable without root.
         HERMES_UID: ${HERMES_UID:-1000}
         HERMES_GID: ${HERMES_GID:-1000}
@@ -93,7 +94,10 @@ services:
       SENTRY_RUNTIME_NAME: hermes
       SENTRY_HERMES_BASE_URL: http://hermes:8642
       SENTRY_HERMES_API_KEY: ${HERMES_API_KEY}
-      SENTRY_HERMES_PINNED_VERSION: ${HERMES_VERSION:-unpinned}
+      # Must match the build arg above: the gateway compares this against the
+      # version the running agent reports and flags drift. A default of
+      # "unpinned" silently disables that check.
+      SENTRY_HERMES_PINNED_VERSION: ${HERMES_VERSION:-0.19.0}
       SENTRY_HERMES_BOOTSTRAP_PROFILE_ID: ${SENTRY_BOOTSTRAP_PROFILE_ID:-}
       SENTRY_HERMES_BOOTSTRAP_PROFILE_NAME: ${SENTRY_BOOTSTRAP_PROFILE_NAME:-sentry-personal}
       # Fernet key that decrypts persisted per-profile Hermes bearer keys in the

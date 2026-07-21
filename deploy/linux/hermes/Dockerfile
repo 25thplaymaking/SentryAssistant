@@ -29,8 +29,12 @@ ENV HERMES_HOME=/home/hermes/.hermes \
     PATH=/home/hermes/.local/bin:$PATH
 
 # Pin the release rather than tracking latest: the agent runtime is never
-# auto-upgraded in production.
-ARG HERMES_VERSION=latest
+# auto-upgraded in production. The pin is the DEFAULT here, not just a value in
+# some deployment's .env -- previously this said `latest` and the only real pin
+# lived in the server's untracked .env, so a clean checkout built whatever PyPI
+# served that day while this comment claimed otherwise. `latest` still works if
+# passed explicitly, for deliberately testing an upgrade.
+ARG HERMES_VERSION=0.19.0
 RUN pip install --no-cache-dir --user \
       $( [ "$HERMES_VERSION" = "latest" ] && echo "hermes-agent" || echo "hermes-agent==${HERMES_VERSION}" )
 
