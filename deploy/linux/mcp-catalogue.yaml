@@ -1,0 +1,86 @@
+# Curated MCP servers Sentry profiles may be given.
+#
+# Every entry here was verified to resolve on the npm registry on 2026-07-21 and
+# is PINNED to the version shown. Pinning is deliberate: `@latest` would fetch
+# and execute whatever was published since, inside the agent's container, on
+# every launch — an unreviewed supply-chain path into a box that holds provider
+# keys. Bump a pin consciously; do not replace it with `latest`.
+#
+# The Hermes container has node/npx and outbound network, but NOT uv/uvx, so
+# Python-only servers (the official `git` and `fetch` servers) cannot run here
+# and are deliberately absent rather than listed and broken.
+#
+# Add to a profile with:
+#     ./manage-mcp.sh --slug <profile> --add <name>
+#
+# `needs_env` entries will not install until the named variables are supplied
+# with --env NAME=VALUE, because a server that silently starts without its
+# credential looks installed and fails at first use.
+
+servers:
+
+  filesystem:
+    description: >-
+      Read and write files under the agent's own /workspace. Scoped to that path
+      only — never the container root, and never another profile's data.
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem@2026.7.10", "/workspace"]
+    risk: low
+
+  memory:
+    description: >-
+      A knowledge graph the agent can persist facts into across sessions. Note
+      this is the MCP reference server's own store, separate from Sentry's
+      governed profile memory.
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-memory@2026.7.4"]
+    risk: low
+
+  sequential-thinking:
+    description: Structured multi-step reasoning scaffold. No I/O, no credentials.
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-sequential-thinking@2026.7.4"]
+    risk: low
+
+  context7:
+    description: >-
+      Up-to-date library and framework documentation lookup. Reaches out to
+      Upstash's hosted index; sends the library/topic being queried.
+    command: npx
+    args: ["-y", "@upstash/context7-mcp@3.2.4"]
+    risk: low
+
+  playwright:
+    description: >-
+      Drive a real browser (navigate, click, extract, screenshot). Powerful and
+      correspondingly risky: a page the agent visits becomes untrusted input, so
+      pair it with the quoted-context rule rather than trusting page text.
+    command: npx
+    args: ["-y", "@playwright/mcp@0.0.78"]
+    risk: medium
+
+  everything:
+    description: >-
+      The MCP reference/demo server exercising every protocol feature. Useful for
+      proving a profile's MCP plumbing works end to end; not for daily use.
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-everything@2026.7.4"]
+    risk: low
+
+  github:
+    description: >-
+      Repository, issue and PR access as the supplied token. Scope the token
+      tightly — the agent inherits exactly what it can do.
+      NOTE: this npm package was last published 2025-04-08 and is effectively
+      superseded by GitHub's hosted remote MCP server. Prefer that when you can.
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github@2025.4.8"]
+    needs_env: ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+    risk: high
+
+  brave-search:
+    description: Web search via the Brave Search API.
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-brave-search@0.6.2"]
+    needs_env: ["BRAVE_API_KEY"]
+    risk: medium
