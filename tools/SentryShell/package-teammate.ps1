@@ -86,7 +86,19 @@ if (Test-Path $keyPath) { Remove-Item $keyPath, "$keyPath.pub" -Force -ErrorActi
 # No passphrase: the app dials unattended at logon. The key's power is bounded
 # by the server-side restriction (one forwarded port, no shell), not by a
 # passphrase the user would have to type on every reconnect.
-& ssh-keygen -t ed25519 -N '""' -C "sentry-$Slug" -f $keyPath -q
+#
+# The passphrase is answered on STDIN, not via -N. PowerShell passes -N '""' as
+# a LITERAL two-quote string, which produces an encrypted key whose passphrase
+# nobody knows: ssh then reports "no identity pubkey loaded" and every
+# connection fails with a misleading "Permission denied (publickey)".
+# Piping blank lines to ssh-keygen does NOT work either -- it reads the
+# passphrase from the console, not stdin, and hangs forever waiting. cmd.exe
+# quotes an empty -N correctly where PowerShell cannot.
+& cmd /c "ssh-keygen -t ed25519 -C sentry-$Slug -f `"$keyPath`" -q -N `"`"" 2>&1 | Out-Null
+if (-not (Test-Path $keyPath)) { throw "ssh-keygen produced no private key" }
+# Prove the key is usable unattended before shipping it.
+& ssh-keygen -y -P '' -f $keyPath > $null 2>&1
+if ($LASTEXITCODE -ne 0) { throw "generated key is passphrase-protected; it cannot dial unattended" }
 if (-not (Test-Path "$keyPath.pub")) { throw "ssh-keygen produced no key" }
 $pub = (Get-Content "$keyPath.pub" -Raw).Trim()
 Ok "keypair generated (sentry-$Slug)"
