@@ -340,6 +340,23 @@ class HermesRuntime(AgentRuntime):
                 )
         return hits[: query.limit]
 
+    async def read_work_board(self, profile_id: UUID) -> dict:
+        """The caller's own agent's Kanban board. Fails closed on an unregistered
+        profile so one person can never read another's board."""
+        instance = self._instance(profile_id)
+        try:
+            response = await self._client.get(
+                instance.url("/api/plugins/kanban/board"),
+                headers=instance.auth_header,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError:
+            # A reachable-but-empty board and an unreachable agent both present as
+            # "no tasks" to the panel rather than a 500; readiness surfaces health.
+            return {"tasks": [], "columns": []}
+        data = response.json()
+        return data if isinstance(data, dict) else {"tasks": []}
+
     async def project_work_order(self, projection: WorkOrderProjection) -> None:
         instance = self._instance(projection.profile_id)
         response = await self._client.post(
