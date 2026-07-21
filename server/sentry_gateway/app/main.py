@@ -20,6 +20,7 @@ from .agent_runtime.hermes import HermesInstance, HermesRuntime
 from .auth.tokens import TokenService
 from .config import Settings, get_settings
 from .routes import admin as admin_routes
+from .routes import agent_messages as agent_messages_routes
 from .routes import auth as auth_routes
 from .routes import chat as chat_routes
 from .routes import kanban as kanban_routes
@@ -129,6 +130,7 @@ app.include_router(profiles_routes.router)
 app.include_router(kanban_routes.router)
 app.include_router(skills_routes.router)
 app.include_router(memory_routes.router)
+app.include_router(agent_messages_routes.router)
 app.include_router(nodes_routes.router)
 app.include_router(teams_routes.router)
 app.include_router(workorders_routes.router)
