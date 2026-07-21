@@ -106,8 +106,15 @@ if ($task) {
     }
     # ExitOnForwardFailure means a leftover forward on 8787/8090 makes the
     # shell's own dial fail outright, so clear it before starting.
+    # Match on the FORWARDED PORTS, not on the host. Filtering by "not a child of
+    # FrontirSentry" is wrong when the shell isn't running: the comparison value
+    # is $null, every ssh matches, and this kills the operator's own interactive
+    # session to the same box.
     Get-CimInstance Win32_Process -Filter "Name='ssh.exe'" |
-        Where-Object { $_.CommandLine -match 'bishop@' -and $_.ParentProcessId -ne (Get-Process FrontirSentry -ErrorAction SilentlyContinue).Id } |
+        Where-Object {
+            $_.CommandLine -match '\[::1\]:8090:127\.0\.0\.1:8090' -or
+            $_.CommandLine -match '\[::1\]:8787:127\.0\.0\.1:8787'
+        } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force; Write-Ok "cleared stale forward pid $($_.ProcessId)" }
 } else {
     Write-Ok 'no legacy task present'

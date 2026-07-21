@@ -115,11 +115,24 @@ m = re.search(r"\n  " + re.escape(name) + r":\n(.*?)(?=\n  [a-z0-9-]+:\n|\Z)", t
 if not m:
     sys.stderr.write(f"'{name}' is not in the catalogue\n"); sys.exit(3)
 block = m.group(1)
+# Two shapes are valid: a stdio server (command + args) and a REMOTE server
+# (url, optionally transport: sse). Hermes supports both; the importer emits
+# remote entries for hosted MCP servers, so rejecting them as "malformed" would
+# make its output unusable by the workflow it points you at.
+url = re.search(r"url:\s*\"?([^\"\n]+)\"?", block)
 cmd = re.search(r"command:\s*(\S+)", block)
 args = re.search(r"args:\s*(\[.*?\])", block, re.S)
-if not cmd or not args:
-    sys.stderr.write(f"catalogue entry '{name}' is malformed\n"); sys.exit(3)
-entry = {"command": cmd.group(1), "args": json.loads(args.group(1))}
+if url:
+    entry = {"url": url.group(1).strip()}
+    transport = re.search(r"transport:\s*(\S+)", block)
+    if transport:
+        entry["transport"] = transport.group(1).strip()
+elif cmd and args:
+    entry = {"command": cmd.group(1), "args": json.loads(args.group(1))}
+else:
+    sys.stderr.write(
+        f"catalogue entry '{name}' is malformed: need either command+args or url\n"
+    ); sys.exit(3)
 needs = re.search(r"needs_env:\s*\[(.*?)\]", block)
 required = [v.strip().strip('"') for v in needs.group(1).split(",")] if needs else []
 supplied = {}

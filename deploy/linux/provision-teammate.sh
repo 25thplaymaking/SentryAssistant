@@ -11,8 +11,11 @@
 # Run on grain.silo from deploy/linux:
 #     ./provision-teammate.sh --name "Alice" --slug alice
 #
-# Idempotent: re-running rebuilds the container from the same data directory and
-# mints a fresh enrollment code. Existing memory/skills/sessions are preserved.
+# Re-running against an EXISTING container is refused unless you pass --recreate;
+# with it, the container is rebuilt from the same data directory and a fresh
+# enrollment code is minted. Existing memory/skills/sessions are preserved.
+# Note --recreate rotates the container API key; the Gateway reloads it on
+# demand at the next turn, so no restart is required.
 #
 set -euo pipefail
 
@@ -100,7 +103,10 @@ fi
 step "Starting ${CONTAINER}"
 API_KEY="$(docker exec sentry-gateway-1 python -c 'import secrets;print(secrets.token_hex(24))')"
 [ -n "$API_KEY" ] || die "could not generate an API key"
-OPENAI_KEY="$(grep '^OPENAI_API_KEY=' .env | cut -d= -f2-)"
+# `set -e` + a failed grep in a command substitution aborts the script with no
+# message at all, so check explicitly and say what is wrong.
+OPENAI_KEY="$(grep '^OPENAI_API_KEY=' .env | cut -d= -f2- || true)"
+[ -n "$OPENAI_KEY" ] || die "no OPENAI_API_KEY in .env — the agent would start but every turn would fail"
 HERMES_UID="$(id -u)"
 HERMES_GID="$(id -g)"
 

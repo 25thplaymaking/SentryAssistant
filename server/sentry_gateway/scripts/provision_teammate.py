@@ -22,8 +22,10 @@ Then:
     SENTRY_RUNTIME_ENC_KEY=... python3 scripts/provision_teammate.py \\
       --display-name "Alice" --slug alice --hermes-api-key <key>
 
-The Gateway registers persisted endpoints at startup, so restart it afterwards
-(`docker compose up -d gateway`) for the new endpoint to take effect in-process.
+The Gateway loads a profile's endpoint on demand at first turn, so no restart
+is needed. (Historically it registered endpoints only at startup; note that
+`docker compose up -d gateway` does NOT restart a container whose config is
+unchanged, so that instruction never worked reliably anyway.)
 """
 
 from __future__ import annotations
@@ -111,7 +113,7 @@ async def provision(dsn, display_name, slug, hermes_base_url, hermes_api_key, en
         print(f"  profile id:      {profile_id}")
         print()
         print("Give the teammate the code; they enter it on the WebUI login (sentry dialect).")
-        print("Then restart the gateway so it registers the new endpoint in-process.")
+        print("No gateway restart is needed: the endpoint loads on demand at first turn.")
     finally:
         await conn.close()
 

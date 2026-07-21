@@ -64,6 +64,16 @@ printf '%s' "$PRESET" | grep -qE '^[a-z0-9][a-z0-9-]{0,40}$' || die "invalid --p
 PRESET_FILE="${PRESET_DIR}/${PRESET}.yaml"
 [ -f "$PRESET_FILE" ] || die "no such preset: ${PRESET} (see --list)"
 
+# Every preset turns skill governance ON, which is right for a teammate but
+# would silently reverse the OWNER profile's documented, deliberate decision to
+# leave it off. Require an explicit override rather than quietly flipping it.
+if [ "$SLUG" = "personal" ] && [ "${SENTRY_PRESET_ALLOW_OWNER:-0}" != "1" ]; then
+    die "refusing to apply a preset to the owner profile: every preset enables
+skills.write_approval/guard_agent_created, reversing the documented risk
+acceptance in hermes/config.yaml. Re-run with SENTRY_PRESET_ALLOW_OWNER=1 if
+that is genuinely what you want."
+fi
+
 if [ "$SLUG" = "personal" ]; then
     CONTAINER="sentry-hermes-1"
     HOME_DIR="${COMPOSE_DIR}/data/hermes/personal"
@@ -106,7 +116,8 @@ soul = preset.get("soul")
 if soul:
     soul_path = home / "SOUL.md"
     if soul_path.exists():
-        # Never destroy a persona someone has tuned; keep one timestamped copy.
+        # Never destroy a persona someone has tuned. One rolling copy, not a
+        # timestamped history: re-applying overwrites it.
         backup = home / "SOUL.md.replaced"
         backup.write_text(soul_path.read_text())
         print("previous SOUL.md kept as SOUL.md.replaced")

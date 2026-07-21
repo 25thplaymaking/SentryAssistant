@@ -140,7 +140,17 @@ services:
       # anyway by a stale bundle.
       HERMES_WEBUI_SKIP_ONBOARDING: "1"
       HERMES_WEBUI_CHAT_BACKEND: gateway
-      HERMES_WEBUI_GATEWAY_BASE_URL: http://hermes:8642
+      # Multi-tenant cutover (2026-07-21). Browser turns go to the SENTRY
+      # GATEWAY, not straight to one shared Hermes: the Gateway resolves the
+      # caller's profile from their own token and routes to that profile's own
+      # agent, failing closed. Pointing this back at http://hermes:8642 silently
+      # reverts the whole deployment to one shared agent for everybody.
+      HERMES_WEBUI_GATEWAY_BASE_URL: http://gateway:8090
+      # Identity comes from a per-user Gateway enrollment token. With this set,
+      # shared-password sign-in is refused (a password session carries no
+      # profile), and the dialect itself counts as an auth method so auth is not
+      # disabled by the absence of a password.
+      HERMES_WEBUI_GATEWAY_DIALECT: sentry
       HERMES_WEBUI_GATEWAY_API_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
       # Approval cards. Without the runs API the agent can sit on an
       # approval-capable command with nothing surfaced in the UI to approve it —

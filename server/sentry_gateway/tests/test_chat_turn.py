@@ -131,21 +131,21 @@ class TestAuth:
 class TestRouting:
     def test_turn_reaches_the_callers_own_agent(self):
         runtime = FakeRuntime([PROFILE_A, PROFILE_B])
-        client = build_client(runtime)
+        client = build_client(runtime, pool=FakePool())
         resp = client.post("/api/chat/turn", json={"prompt": "hi"}, headers=bearer(PROFILE_A))
         assert resp.status_code == 200
         assert runtime.turns == [(PROFILE_A, "hi")]
 
     def test_two_profiles_route_to_their_own_agents(self):
         runtime = FakeRuntime([PROFILE_A, PROFILE_B])
-        client = build_client(runtime)
+        client = build_client(runtime, pool=FakePool())
         client.post("/api/chat/turn", json={"prompt": "a"}, headers=bearer(PROFILE_A))
         client.post("/api/chat/turn", json={"prompt": "b"}, headers=bearer(PROFILE_B))
         assert (PROFILE_A, "a") in runtime.turns
         assert (PROFILE_B, "b") in runtime.turns
 
     def test_streams_events_then_done(self):
-        client = build_client(FakeRuntime([PROFILE_A]))
+        client = build_client(FakeRuntime([PROFILE_A]), pool=FakePool())
         resp = client.post("/api/chat/turn", json={"prompt": "hi"}, headers=bearer(PROFILE_A))
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("text/event-stream")
@@ -157,7 +157,7 @@ class TestRouting:
 class TestFailClosed:
     def test_unprovisioned_profile_never_reaches_an_agent(self):
         runtime = FakeRuntime([PROFILE_A])  # UNPROVISIONED is not registered
-        client = build_client(runtime)
+        client = build_client(runtime, pool=FakePool())
         resp = client.post("/api/chat/turn", json={"prompt": "hi"}, headers=bearer(UNPROVISIONED))
         assert resp.status_code == 503
         assert runtime.turns == []
@@ -250,3 +250,24 @@ class TestLateProvisioning:
         assert resp.status_code == 503
         assert runtime.turns == []
         assert runtime.sessions_created == []
+
+
+class TestAuditIsNotOptional:
+    """A turn that cannot be audited must be refused, including when there is no DB.
+
+    chat.py refuses a turn whose audit INSERT fails, but `_audit_service`
+    returns None when app.state.pool is None -- so with the database down the
+    audit block was skipped entirely and the turn ran UNRECORDED. Token
+    verification needs no DB, so this state is reachable and chat-able.
+    """
+
+    def test_turn_is_refused_when_there_is_no_database_to_audit_into(self):
+        runtime = FakeRuntime([PROFILE_A])
+        client = build_client(runtime, pool=None)  # DB unavailable
+
+        resp = client.post(
+            "/api/chat/turn", json={"prompt": "hi"}, headers=bearer(PROFILE_A)
+        )
+
+        assert resp.status_code == 503
+        assert runtime.turns == [], "a turn must never run unrecorded"

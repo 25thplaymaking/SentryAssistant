@@ -1,5 +1,12 @@
 # Flip brief — cutting the WebUI over to the Sentry Gateway (`dialect: sentry`)
 
+> ⚠️ **SUPERSEDED — do not follow this document.**
+> Read `2026-07-21-multitenant-LIVE.md` instead. Two instructions below are now
+> known-wrong: seeding a teammate home from `data/hermes/personal/` (carries the
+> owner's ungated skills config into someone else's agent), and removing
+> `HERMES_WEBUI_PASSWORD` (that would have disabled authentication entirely).
+> `docker compose up -d gateway` also does not restart an unchanged container.
+
 **Date:** 2026-07-21 · **Status:** staged, NOT fired — awaiting Bryce's go
 **Gateway:** `25vid/sentry-foundation` @ `20c1edf` · **Fork:** `frontir` @ `1bac875e`
 **Box:** grain.silo (`ssh bishop@205.209.116.114`)

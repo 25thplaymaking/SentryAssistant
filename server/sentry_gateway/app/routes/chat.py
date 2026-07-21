@@ -103,6 +103,15 @@ async def chat_turn(
     session_id = body.session_id or session.session_id
 
     audit = _audit_service(request)
+    if audit is None:
+        # No database means no audit trail. Token verification needs no DB, so
+        # this state is reachable and would otherwise run the turn UNRECORDED —
+        # defeating the append-only audit guarantee the whole design rests on.
+        # Refuse, exactly as a failed audit INSERT does below.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Audit storage is unavailable; refusing to run an unrecorded turn.",
+        )
     if audit is not None:
         # The prompt itself is never stored in audit; only that a turn happened,
         # by whom, in which profile/session. A turn that cannot be audited is
