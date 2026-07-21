@@ -15,6 +15,7 @@ import asyncpg
 from fastapi import FastAPI, Response, status
 
 from .agent_runtime.base import AgentRuntime
+from .agent_runtime.endpoints import EndpointCipher, register_persisted_endpoints
 from .agent_runtime.hermes import HermesInstance, HermesRuntime
 from .auth.tokens import TokenService
 from .config import Settings, get_settings
@@ -76,6 +77,25 @@ async def lifespan(app: FastAPI):
             # Fail closed: without the revocation list we cannot verify tokens
             # safely, so drop the service and let routes return 503.
             app.state.tokens = None
+
+    # Register any persisted per-profile Hermes endpoints on top of the bootstrap
+    # profile, so a provisioned teammate is routable without an env change and
+    # restart. This runs after the pool exists. Failing here only leaves those
+    # profiles unroutable (routing fails closed at turn time), so it must never
+    # crash startup.
+    runtime = app.state.runtime
+    if (
+        app.state.pool is not None
+        and settings.has_runtime_enc_key
+        and hasattr(runtime, "register")
+    ):
+        try:
+            cipher = EndpointCipher(settings.runtime_enc_key)
+            await register_persisted_endpoints(runtime, app.state.pool, cipher)
+        except Exception:
+            # A bad key or malformed row must not take the whole Gateway down;
+            # the affected profiles simply fail closed when a turn is attempted.
+            pass
 
     try:
         yield

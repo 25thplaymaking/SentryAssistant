@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     hermes_bootstrap_profile_id: str = ""
     hermes_bootstrap_profile_name: str = "sentry-personal"
 
+    #: Fernet key (urlsafe-base64) that decrypts persisted per-profile Hermes
+    #: bearer keys in `runtime_endpoints`. Held only here, never in the database.
+    #: Without it, persisted endpoints are skipped and only the bootstrap profile
+    #: is routable.
+    runtime_enc_key: str = ""
+
+    @property
+    def has_runtime_enc_key(self) -> bool:
+        return bool(self.runtime_enc_key)
+
     runtime_name: str = Field(
         default="hermes",
         description="Selected AgentRuntime. Reversible by configuration.",
