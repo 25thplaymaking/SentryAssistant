@@ -50,6 +50,17 @@ per-agent provisioning. Fork management panels (Skills/Kanban/Memory/Cron/Profil
 fixed by routing through Gateway profile-scoped APIs + the existing skill-governance
 lifecycle — **not** filesystem writes to a shared home.
 
+### Slice-1 build progress
+
+- [x] **1. Persist profile→endpoint** — `runtime_endpoints` (migration 004), Fernet-encrypted bearer key (`SENTRY_RUNTIME_ENC_KEY`), load+register at startup on top of the bootstrap profile, fail-closed for unregistered profiles. `app/agent_runtime/endpoints.py`. Commit `61ab96f`; 7 new tests, 242 pass.
+- [x] **2. Gateway client chat route** — `POST /api/chat/turn`: authed → `require_caller` → `caller.profile_id` → `AgentRuntime.send_turn`, SSE streamed, one audit event per turn; unregistered/mismatched profile fails closed (503) before any stream; unauth → 401. `app/routes/chat.py`. Commit `cacc2fb`; 8 new tests, 250 pass. (Follow-ups: no `previous_response_id` continuity yet; mid-stream runtime error truncates rather than emitting an error frame.)
+
+--- items below touch the LIVE control plane (grain.silo) — checkpoint before running ---
+
+- [ ] **3. Provision 2nd `sentry-hermes-<user>`** container (own home/port/key); apply migration 004 to the live DB; set `SENTRY_RUNTIME_ENC_KEY`; persist & register both profiles' endpoints.
+- [ ] **4. Fork per-user login + repoint** the fork at `sentry-gateway:8090`, forward the user's Gateway token so chat routes to their agent (replaces the shared password + direct `hermes:8642`).
+- [ ] **5. Exit test** — logged in as A reaches only agent A; as B only agent B; a forged/unregistered profile fails closed. Headless verification on the box.
+
 Working analysis + as-found evidence: `docs/specs/2026-07-20-multi-tenant-sentry-design.md`
 (subordinate to this plan). Fork state: `docs/2026-07-20-session-report.md`.
 
