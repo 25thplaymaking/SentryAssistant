@@ -66,13 +66,26 @@ lifecycle — **not** filesystem writes to a shared home.
 - **New Phase 2 = old Phase 2 + Phase 3 combined** — fix the dead panels for real, per-user (Skills/Kanban/Memory/Cron/Profiles → Gateway profile-scoped routes; Skills via the governance lifecycle) **and** provisioning ("add a teammate": per-user `sentry-hermes-<user>` container + home + provider config + enrolment + persist/register endpoint). These two ship together.
 - **New Phase 3 = old Phase 4, standalone** — the gated, allow-listed, redacted inter-agent messaging channel.
 
-**Phase 2 progress (started 2026-07-21):** first surface landed — `GET /api/profiles/me`
-(Gateway, profile-scoped, owns-only, flags the active profile; `app/routes/profiles.py`,
-3 tests, commit `c884edc`, deployed live/dormant). Remaining Phase 2 is large and
-multi-session: the other panels (Skills via the governance lifecycle, Kanban, Memory,
-Cron) each need a Gateway profile-scoped route + fork-side wiring, PLUS provisioning
-automation ("add a teammate": user+profile+home+`sentry-hermes-<user>` container+enrol+
-register endpoint). Phase 3 (inter-agent messaging) is a separate new subsystem, not started.
+**Phase 2 + 3 GATEWAY BACKENDS — DONE, deployed, unit-tested (2026-07-21).**
+All five per-user panels have profile-scoped, fail-closed Gateway routes, deployed live:
+`GET /api/profiles/me` (own profiles), `GET /api/kanban/board` (own board via runtime),
+`GET /api/skills` (governance `skill_proposals`), `GET|PUT /api/memory` (Gateway-native,
+migration 006), `GET|POST /api/cron` (Gateway-native, migration 008). **Phase 3** landed:
+`POST|GET /api/agent-messages` — allow-listed (`agent_message_grants`), fail-closed,
+boundary-redacted, audited (migration 007). **273 gateway tests.** Key finding driving the
+Gateway-native design: the Hermes API server exposes NO panel endpoints (`/api/plugins/*`
+etc. 404) — Kanban's runtime read returns empty on this build until home-access or a
+projection exists.
+
+**Remaining to make the panels user-visible (the honest residual):**
+1. **Fork-side wiring** — the fork's Skills/Kanban/Memory/Cron/Profiles panels + an inbox
+   must call these Gateway routes in `dialect=sentry` (the chat-repoint pattern, per panel).
+   Buildable but large; can only be e2e-verified via a supervised deploy.
+2. **Provisioning** — "add a teammate" (user+profile+home+`sentry-hermes-<user>` container+
+   enrol+register endpoint). The Gateway-native panels (profiles/skills/memory/cron) work
+   without it; chat + kanban need real per-user agents.
+3. **Live e2e** — supervised: flip the fork to `dialect=sentry`, mint real enrollment codes,
+   verify in a browser.
 - [x] **5. Exit test PROVEN LIVE** (2026-07-21) — reused two throwaway e2e profiles + two SSE listeners: profile A → `ep-a` (`summary: ok-ep-a`), profile B → `ep-b` (`ok-ep-b`), each listener hit exactly once (no cross-talk), unregistered profile → 503 reaching nothing. Exercised the full path: DB-persisted encrypted endpoint → env-key decrypt → startup registration → per-profile routing → SSE. Torn down clean; gateway healthy.
 
 **Follow-ups noted during the live proof (non-blocking):** a chat turn currently returns a bare 500 if the audit INSERT fails (fail-closed on audit is defensible, but should be a clean error); `deploy/linux/.env` is mode 664 (world-readable) and holds secrets — pre-existing hygiene item; two immutable audit rows from the proof remain (honest artefact, attributed to e2e test users).
