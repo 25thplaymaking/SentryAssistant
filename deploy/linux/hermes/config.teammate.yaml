@@ -1,0 +1,51 @@
+# Hermes profile configuration for a TEAMMATE personal profile.
+#
+# Seeded into data/hermes/<slug>/config.yaml by provision-teammate.sh. Contains
+# no secrets: provider keys and the API server key arrive through the container
+# environment.
+#
+# This differs from hermes/config.yaml (Bryce's own profile) in one respect that
+# matters: skill governance is ON. The owner's profile leaves it off as a
+# deliberate, documented risk acceptance for himself. That reasoning does not
+# transfer to another person's agent — a teammate's agent authoring a skill that
+# silently auto-loads into every later session is exactly the case the scanner
+# exists for, and the operator, not the teammate, carries the consequence.
+
+model:
+  # Registry name is "openai-api" (native OpenAI), NOT "openai". Leaving this
+  # unset while OPENAI_API_KEY is exported resolves to "openrouter" and sends
+  # requests to the wrong endpoint.
+  provider: openai-api
+  model: gpt-5.4
+
+memory:
+  # Durable memories are proposed, then shown to the profile's owner before they
+  # are committed. Nothing is written silently.
+  write_approval: true
+
+skills:
+  # ON for teammates (see header). write_approval queues agent-authored skills
+  # for review; guard_agent_created runs the exfiltration / injection /
+  # destructive / persistence / network / obfuscation scanner over them.
+  #
+  # Note the same caveat that applies to the owner profile: these flags only
+  # affect AGENT-authored skills. Externally-sourced skills are scanned
+  # regardless under the builtin/trusted/community trust policy.
+  write_approval: true
+  guard_agent_created: true
+
+tools:
+  # Explicit toolset rather than "whatever is available", so a runtime upgrade
+  # cannot silently widen what a teammate's agent can reach.
+  lazy_install: false
+
+api_server:
+  enabled: true
+  # Bound to the container interface so only the Sentry Gateway on the internal
+  # compose network can reach it. Never published to a host or public port.
+  host: 0.0.0.0
+  port: 8642
+
+gateway:
+  # Unknown senders are denied. No allow-all.
+  allow_all_users: false
