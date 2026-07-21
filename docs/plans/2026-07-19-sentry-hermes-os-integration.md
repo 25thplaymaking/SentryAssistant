@@ -77,15 +77,17 @@ Gateway-native design: the Hermes API server exposes NO panel endpoints (`/api/p
 etc. 404) — Kanban's runtime read returns empty on this build until home-access or a
 projection exists.
 
-**Remaining to make the panels user-visible (the honest residual):**
-1. **Fork-side wiring** — the fork's Skills/Kanban/Memory/Cron/Profiles panels + an inbox
-   must call these Gateway routes in `dialect=sentry` (the chat-repoint pattern, per panel).
-   Buildable but large; can only be e2e-verified via a supervised deploy.
-2. **Provisioning** — "add a teammate" (user+profile+home+`sentry-hermes-<user>` container+
-   enrol+register endpoint). The Gateway-native panels (profiles/skills/memory/cron) work
-   without it; chat + kanban need real per-user agents.
-3. **Live e2e** — supervised: flip the fork to `dialect=sentry`, mint real enrollment codes,
-   verify in a browser.
+**ALL APPLICATION CODE for the 3 phases is now complete, committed, tested, Gateway deployed.**
+- Fork-side wiring — **all panels done** (fork `1bac875e`): Skills/Kanban/Memory/Cron/Profiles +
+  inter-agent inbox proxy to their Gateway route in `dialect=sentry` (reusable
+  `sentry_gateway_client` + `sentry_access_token_from_handler`; 30 fork sentry tests).
+- Provisioning — **tool written** (`scripts/provision_teammate.py`, `6b9d871`): user + profile +
+  encrypted per-user endpoint + enrollment code.
+
+**Sole residual = a supervised live cutover** (inherently needs the live box + a browser + the
+operator; changes the user-facing app → deliberate checkpoint, not remaining code): (a) start a
+teammate `sentry-hermes-<slug>` container, (b) run `provision_teammate.py`, (c) flip the fork to
+`dialect=sentry` + deploy, (d) verify login + isolated chat + panels in a browser.
 - [x] **5. Exit test PROVEN LIVE** (2026-07-21) — reused two throwaway e2e profiles + two SSE listeners: profile A → `ep-a` (`summary: ok-ep-a`), profile B → `ep-b` (`ok-ep-b`), each listener hit exactly once (no cross-talk), unregistered profile → 503 reaching nothing. Exercised the full path: DB-persisted encrypted endpoint → env-key decrypt → startup registration → per-profile routing → SSE. Torn down clean; gateway healthy.
 
 **Follow-ups noted during the live proof (non-blocking):** a chat turn currently returns a bare 500 if the audit INSERT fails (fail-closed on audit is defensible, but should be a clean error); `deploy/linux/.env` is mode 664 (world-readable) and holds secrets — pre-existing hygiene item; two immutable audit rows from the proof remain (honest artefact, attributed to e2e test users).
