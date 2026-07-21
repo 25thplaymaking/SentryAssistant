@@ -139,15 +139,18 @@ PY
         ) || die "could not build the entry (see above)"
     fi
 
-    printf '%s' "$ENTRY_JSON" | docker exec -i "$CONTAINER" python3 - "$ACTION" "$NAME" <<'PY'
+    # The entry travels as an ARGUMENT, not on stdin: `python3 -` already reads
+    # its program from stdin (the heredoc below), so anything piped in is eaten
+    # by the interpreter and never reaches the script.
+    docker exec -i "$CONTAINER" python3 - "$ACTION" "$NAME" "$ENTRY_JSON" <<'PY'
 import json, sys, pathlib, yaml
-action, name = sys.argv[1], sys.argv[2]
+action, name, payload_json = sys.argv[1], sys.argv[2], sys.argv[3]
 path = pathlib.Path("/home/hermes/.hermes/config.yaml")
 cfg = yaml.safe_load(path.read_text()) or {}
 servers = cfg.get("mcp_servers") or {}
 
 if action == "add":
-    payload = json.loads(sys.stdin.read() or "{}")
+    payload = json.loads(payload_json or "{}")
     entry = payload["entry"]
     # Hermes' own validator — the same one guarding its interactive picker.
     try:
