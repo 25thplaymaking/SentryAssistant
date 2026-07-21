@@ -8,6 +8,51 @@
 
 **Tech stack:** Hermes Agent on Python 3.11 as the current recommended runtime; FastAPI, PostgreSQL, rootless Docker, Caddy, Authentik/OIDC, ASP.NET Core/.NET 10 Windows Worker, WinUI 3, SwiftUI, APNs, optional Twilio SMS, Gmail API, Discord gateway, Steam Web API, native Windows/iOS speech, optional local Whisper, and optional OpenAI Audio/Realtime APIs.
 
+## 2026-07-20 Reconciliation — the web client is the hermes-webui fork, brought forward
+
+Decision (Bryce, 2026-07-20): the **hermes-webui fork "Frontir Sentry"
+(`SentryWebUI`, branch `frontir`) becomes Sentry's primary web client**, wired to
+this Gateway. It replaces and pulls forward the from-scratch `web/sentry-gateway/`
+recovery surface described in **Task 11**. Rationale: the fork is already deployed
+and in daily use, so making it a proper multi-tenant Gateway client is the fastest
+path to a working per-person web assistant and simultaneously realizes this plan's
+web-client goal.
+
+**This reorders delivery** (web-gateway client lands early, alongside Tasks 2–5, not
+at Task 11). It does **not** change any Gateway contract, isolation constraint, or
+release Gate.
+
+**Approach A — the Gateway is the multiplexer.** The fork authenticates each user via
+the Gateway's existing device-enrolment identity (access-token `pid` claim = profile),
+and the Gateway routes each user to their own `sentry-hermes-<user>` container via the
+already-built, fail-closed `HermesRuntime._instance(profile_id)`
+(`app/agent_runtime/hermes.py:115-123`). The fork must stop addressing a Hermes
+container directly (today it wrongly points at a single shared `hermes:8642`).
+
+**Prerequisites still unbuilt (the real work — all subsets of Tasks 2/5 already scoped):**
+1. Persist the profile→Hermes-endpoint map (base_url/port/**encrypted** api_key) beside
+   `profiles.runtime_home`, and register per profile at startup/provision. Today only
+   the single bootstrap profile is registered, in process memory (`app/main.py:28-44`).
+2. A client-facing chat/turn route that requires `require_caller`, resolves
+   `caller.profile_id`, and drives `HermesRuntime.send_turn`. Nothing calls it yet
+   (only `capabilities()` is wired).
+3. Provision a 2nd `sentry-hermes-<user>` container + home; repoint the fork at the
+   Gateway (`sentry-gateway:8090`); add per-user login to the fork.
+
+**First slice (proves the whole thing) — two profiles** (Bryce + one test user): logged
+in as A, chat + panels reach only agent A; as B, only agent B; a mismatched profile
+fails closed. Maps to this plan's Gate 1 → Gate 2 progression for the web client.
+
+**Locked sub-decisions:** login reuses Gateway device-enrolment (no parallel password
+store); personal profiles only for the first slices (team profiles deferred); the
+provider-key panel is relabelled honestly now and real provider config moves to
+per-agent provisioning. Fork management panels (Skills/Kanban/Memory/Cron/Profiles) are
+fixed by routing through Gateway profile-scoped APIs + the existing skill-governance
+lifecycle — **not** filesystem writes to a shared home.
+
+Working analysis + as-found evidence: `docs/specs/2026-07-20-multi-tenant-sentry-design.md`
+(subordinate to this plan). Fork state: `docs/2026-07-20-session-report.md`.
+
 ## Global constraints
 
 - Keep identity, authorization, work orders, audit, artifacts, connector grants, and client APIs independent of Hermes internals. No desktop, phone, web, or Node client may call a runtime-specific endpoint directly.

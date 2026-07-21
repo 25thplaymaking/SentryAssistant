@@ -1,5 +1,12 @@
 # Multi-Tenant Sentry — A Private Agent Per Person (Design)
 
+> **Status (2026-07-20): FOLDED INTO the authoritative plan — not a competing plan.**
+> The decision this analysis informs — the hermes-webui fork becomes Sentry's early
+> web-gateway client (Approach A) — is recorded authoritatively in
+> `docs/plans/2026-07-19-sentry-hermes-os-integration.md` (see its "2026-07-20
+> Reconciliation" section). Follow that plan. Use this doc only for the as-found
+> evidence and component detail below.
+
 **Date:** 2026-07-20 · **Status:** draft for review · **Author:** Bryce + Claude
 **Repos in scope:** `SentryAssistant` (Gateway, worktree `25vid/sentry-foundation`, `server/sentry_gateway`) · `SentryWebUI` (`frontir` branch)
 **Decisions locked before drafting:** Approach **A** (Gateway is the multiplexer) · **fix** the dead panels, don't hide them · full per-user routing · scale **2–4 people** (inner circle) · inter-agent channel is **agent-autonomous but gated** (allow-listed pairs, redacted at the boundary).
