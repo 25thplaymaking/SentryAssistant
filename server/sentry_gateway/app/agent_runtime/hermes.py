@@ -351,8 +351,14 @@ class HermesRuntime(AgentRuntime):
             )
             response.raise_for_status()
         except httpx.HTTPError:
-            # A reachable-but-empty board and an unreachable agent both present as
-            # "no tasks" to the panel rather than a 500; readiness surfaces health.
+            # NOTE (verified 2026-07-21): the hermes-agent API server does NOT
+            # expose /api/plugins/kanban/board (it 404s) — the API server serves
+            # only /v1/* + /v1/capabilities + /health. So on the current build this
+            # always returns empty. Kanban/memory/skills/cron cannot be served by
+            # proxying the Hermes API; they need either home-filesystem access or a
+            # Gateway-native store (see the plan's work-order-is-authoritative rule).
+            # This method is kept as the correct fail-closed shape for when a board
+            # source exists; it is intentionally empty-not-500 until then.
             return {"tasks": [], "columns": []}
         data = response.json()
         return data if isinstance(data, dict) else {"tasks": []}
