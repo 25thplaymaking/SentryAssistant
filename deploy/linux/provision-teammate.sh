@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 #
 # Provision a Sentry teammate: hardened per-user Hermes container + profile +
-# registered runtime endpoint + enrollment code.
+# registered runtime endpoint + a username/password + an enrollment code.
+#
+# The handover is the username and password this prints. The enrollment code is
+# still printed too: it is how a fresh device pairs, and the way in for someone
+# who has no password yet.
 #
 # Hermes selects its profile per PROCESS, never per request, so isolation means
 # one container per profile with its own HERMES_HOME. This script is the whole
@@ -21,18 +25,23 @@ set -euo pipefail
 
 NAME=""
 SLUG=""
+USERNAME=""
+PASSWORD=""
 MEMORY_LIMIT="2g"
 CPU_LIMIT="1.5"
 PIDS_LIMIT="512"
 RECREATE=0
 
 usage() {
-    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
     cat <<'USAGE'
 
 Options:
   --name  <display name>   Required. Shown in the UI and audit log.
   --slug  <short-slug>     Required. [a-z0-9-]; names the container and data dir.
+  --username <name>        Login name (default: the slug).
+  --password <secret>      Initial password; a strong one is generated if omitted.
+                           Either way it must be changed at first sign-in.
   --memory <limit>         Container memory cap (default 2g).
   --cpus   <limit>         Container CPU cap (default 1.5).
   --pids   <limit>         Container PID cap (default 512).
@@ -44,6 +53,8 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --name)     NAME="${2:-}"; shift 2 ;;
         --slug)     SLUG="${2:-}"; shift 2 ;;
+        --username) USERNAME="${2:-}"; shift 2 ;;
+        --password) PASSWORD="${2:-}"; shift 2 ;;
         --memory)   MEMORY_LIMIT="${2:-}"; shift 2 ;;
         --cpus)     CPU_LIMIT="${2:-}"; shift 2 ;;
         --pids)     PIDS_LIMIT="${2:-}"; shift 2 ;;
@@ -161,16 +172,33 @@ done
 }
 ok "serving"
 
-# 4. Profile + endpoint + enrollment code ---------------------------------------
-step "Registering the profile and runtime endpoint"
-docker exec sentry-gateway-1 python scripts/provision_teammate.py \
-    --display-name "$NAME" --slug "$SLUG" --hermes-api-key "$API_KEY"
+# 4. Profile + endpoint + credential + enrollment code --------------------------
+step "Registering the profile, runtime endpoint and sign-in credential"
+PROVISION_ARGS=(--display-name "$NAME" --slug "$SLUG" --hermes-api-key "$API_KEY")
+# if/fi rather than `[ -n "$X" ] && ...`: under `set -e` that idiom aborts the
+# whole script when the test is false, because the AND-list's exit status is the
+# failed test's.
+if [ -n "$USERNAME" ]; then
+    PROVISION_ARGS+=(--username "$USERNAME")
+fi
+# Passed as an argument, so it is visible in this container's process list for
+# the moment the script runs -- the same exposure the Hermes API key above
+# already has, on a box only operators can reach. Omit --password and let a
+# strong one be generated if even that is too much.
+if [ -n "$PASSWORD" ]; then
+    PROVISION_ARGS+=(--password "$PASSWORD")
+fi
+docker exec sentry-gateway-1 python scripts/provision_teammate.py "${PROVISION_ARGS[@]}"
 
 cat <<EOF
 
-Done. ${NAME} can sign in at the Sentry web app with the enrollment code above
-(valid five minutes; re-run this script with --recreate, or the gateway script
-alone, to mint another).
+Done. Give ${NAME} the Sentry web app URL, the username and the password printed
+above -- that is the whole handover. They will be asked to choose their own
+password at first sign-in.
+
+The enrollment code above is for pairing a device (and is the way in for anyone
+who has no password yet). It is valid five minutes; re-run this script with
+--recreate, or the gateway script alone, to mint another.
 
 The Gateway loads the new endpoint on demand at first turn, so no restart is
 needed.
