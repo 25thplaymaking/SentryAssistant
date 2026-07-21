@@ -72,19 +72,27 @@ async def chat_turn(
     audit = _audit_service(request)
     if audit is not None:
         # The prompt itself is never stored in audit; only that a turn happened,
-        # by whom, in which profile/session.
-        await audit.record(
-            AuditEvent(
-                action="chat.turn",
-                decision=Decision.ALLOWED,
-                correlation_id=correlation_id,
-                actor_user_id=caller.user_id,
-                actor_device_id=caller.device_id,
-                profile_id=caller.profile_id,
-                target_kind="session",
-                target_id=session_id,
+        # by whom, in which profile/session. A turn that cannot be audited is
+        # refused (fail closed on audit) rather than run unrecorded — but with a
+        # clean 503, never a raw 500 stack trace to the client.
+        try:
+            await audit.record(
+                AuditEvent(
+                    action="chat.turn",
+                    decision=Decision.ALLOWED,
+                    correlation_id=correlation_id,
+                    actor_user_id=caller.user_id,
+                    actor_device_id=caller.device_id,
+                    profile_id=caller.profile_id,
+                    target_kind="session",
+                    target_id=session_id,
+                )
             )
-        )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Could not record this turn for audit; refused.",
+            ) from exc
 
     turn = RuntimeTurn(
         session_id=session_id,

@@ -160,6 +160,34 @@ class TestFailClosed:
         assert runtime.sessions_created == []
 
 
+class RaisingPool:
+    """A pool whose connection.execute always fails (e.g. DB down / FK violation)."""
+
+    def acquire(self):
+        class Ctx:
+            async def __aenter__(self):
+                class Conn:
+                    async def execute(self, *_a):
+                        raise RuntimeError("audit write failed")
+
+                return Conn()
+
+            async def __aexit__(self, *_):
+                return False
+
+        return Ctx()
+
+
+class TestAuditFailClosed:
+    def test_audit_failure_refuses_the_turn_cleanly(self):
+        runtime = FakeRuntime([PROFILE_A])
+        client = build_client(runtime, pool=RaisingPool())
+        resp = client.post("/api/chat/turn", json={"prompt": "hi"}, headers=bearer(PROFILE_A))
+        # A clean 503, not a raw 500 stack trace, and the agent is never reached.
+        assert resp.status_code == 503
+        assert runtime.turns == []
+
+
 class TestAudit:
     def test_turn_records_an_audit_event(self):
         pool = FakePool()
