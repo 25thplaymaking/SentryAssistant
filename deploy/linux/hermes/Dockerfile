@@ -39,6 +39,25 @@ RUN pip install --no-cache-dir --user \
 # serves cron alone, so this is a hard requirement rather than an optional extra.
 RUN pip install --no-cache-dir --user aiohttp
 
+# MCP support is an OPTIONAL dependency of hermes-agent: without the `mcp` SDK,
+# tools/mcp_tool.py sets _MCP_AVAILABLE=False and register_mcp_servers() returns
+# an empty list, so every configured MCP server is silently ignored. Verified on
+# 0.19.0: with the SDK installed the same config registered 14 tools.
+RUN pip install --no-cache-dir --user mcp
+
+# Fix the api_server path so configured MCP servers reach the agent.
+#
+# Hermes calls discover_mcp_tools() before building the agent on the CLI, TUI and
+# (since upstream #4219) cron paths — but NOT on the api_server path, which is
+# the only one Sentry uses. Without this the tool registry is empty at turn time
+# no matter what mcp_servers says. Verified: /v1/responses reported "NO MCP
+# TOOLS" before, and exposes the mcp__* toolset after.
+#
+# The patch is idempotent and FAILS THE BUILD if the anchor moves, so a Hermes
+# upgrade cannot silently drop it and leave MCP quietly broken again.
+COPY --chown=hermes:hermes patches/api_server_mcp_discovery.py /tmp/
+RUN python3 /tmp/api_server_mcp_discovery.py
+
 EXPOSE 8642
 
 # The API server binds loopback by default; inside a container it must bind the
