@@ -51,7 +51,6 @@ CATALOGUE="${COMPOSE_DIR}/mcp-catalogue.yaml"
 die() { printf '\nERROR: %s\n' "$1" >&2; exit 1; }
 
 if [ "$ACTION" = "catalogue" ]; then
-    docker exec -i sentry-hermes-1 python3 - <<'PY' < /dev/null 2>/dev/null || \
     python3 - "$CATALOGUE" <<'PY'
 import sys, re
 path = sys.argv[1]
