@@ -185,6 +185,28 @@ services:
       # Bound to the container interface, published to loopback only (below).
       # The password is the second lock, not the first.
       HERMES_WEBUI_PASSWORD: ${WEBUI_PASSWORD:?WEBUI_PASSWORD is required}
+
+      # --- Published over HTTPS through the cloudflared sidecar -------------
+      # TLS terminates at Cloudflare's edge, so this process only ever speaks
+      # plain HTTP and cannot detect the secure context itself. Without this the
+      # session cookie ships with NO Secure attribute on an internet-facing app.
+      HERMES_WEBUI_SECURE: "1"
+      HERMES_WEBUI_TRUST_FORWARDED_PROTO: "1"
+      # Every request now arrives from the same socket peer (the sidecar), so
+      # per-client rate limiting has to read the forwarded client. This is the
+      # opt-in that makes the forwarded chain consultable AT ALL; it is honoured
+      # only when the un-spoofable socket peer falls inside the CIDRs below, so
+      # a direct client cannot promote itself with a header.
+      HERMES_WEBUI_TRUST_FORWARDED_FOR: "1"
+      # The compose network's subnet — Docker assigns it, and it is 172.25.0.0/16
+      # on grain.silo today (`docker network inspect sentry_sentry`). It is NOT
+      # pinned in the `networks:` block below on purpose: pinning IPAM forces a
+      # network recreate, which means downing every Sentry container on a live
+      # deployment. If Docker ever hands out a different subnet, this stops
+      # matching and the trust check fails closed — per-client throttling
+      # degrades back to one shared bucket (safe, but weaker), so re-check this
+      # value after any `docker compose down`.
+      HERMES_WEBUI_TRUSTED_PROXY_CIDRS: "172.25.0.0/16"
     volumes:
       - ./data/webui/home:/home/hermes/.hermes
       # Same persisted work area the hermes service mounts. The WebUI is
@@ -193,11 +215,42 @@ services:
       # the workspace the agent actually writes to, not a divergent empty dir.
       - ./data/workspace:/workspace
     ports:
-      # Loopback only, same rule as the Gateway. Reached over the SSH tunnel;
-      # never published to a public interface.
+      # Loopback only, same rule as the Gateway — this host never opens a public
+      # port. Kept for the SSH tunnel (the desktop shell and headless curl
+      # checks on the box). Public reach comes from the cloudflared sidecar
+      # below, which dials OUT to Cloudflare and reaches this container over the
+      # compose network, not through this publish.
       - "127.0.0.1:8787:8787"
     security_opt:
       - no-new-privileges:true
+    networks: [sentry]
+
+  cloudflared:
+    # Sentry's OWN tunnel — deliberately not the box's shared
+    # /etc/cloudflared/config.yml, which serves the Frontir website. Its own
+    # tunnel, credentials and ingress live here so this deployment owns its
+    # front door end to end: nothing to edit in another project's repo, no root
+    # on the host, and no listening port to firewall.
+    #
+    # This replaces the plan's `Caddy :443`. nginx owns 80/443 on grain.silo for
+    # 25vid production; a third proxy could not have had 443 without displacing
+    # it, and an outbound tunnel needs no inbound port at all.
+    image: cloudflare/cloudflared:2026.7.2
+    restart: unless-stopped
+    depends_on: [webui]
+    # The tunnel ID is not a secret (the credentials file is), but it is
+    # per-deployment, so it comes from .env rather than being baked in here.
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run ${SENTRY_TUNNEL_ID:?SENTRY_TUNNEL_ID is required}
+    volumes:
+      # Ingress rules are version-controlled. Config on the box is what
+      # `git checkout -- .` silently reverted last time; keep it in the repo.
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      # Tunnel credentials — 0600, gitignored, never committed.
+      - ./cloudflared/creds.json:/etc/cloudflared/creds.json:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks: [sentry]
 
 networks:

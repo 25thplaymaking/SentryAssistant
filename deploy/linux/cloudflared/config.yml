@@ -1,0 +1,38 @@
+# Sentry's own Cloudflare Tunnel — ingress for the published WebUI.
+#
+# The tunnel ID is passed on the command line from ${SENTRY_TUNNEL_ID} (see
+# compose.yaml) so this file stays deployment-agnostic and secret-free.
+#
+# Why a tunnel and not a port: grain.silo also runs 25vid production behind
+# nginx on 80/443. This dials OUT to Cloudflare, so Sentry needs no inbound
+# port, no certificate renewal, and no root on the host — and the origin cannot
+# be reached directly, which means Cloudflare's protections cannot be bypassed
+# by hitting the box's IP with a forged Host header.
+
+credentials-file: /etc/cloudflared/creds.json
+
+# Keep the connection healthy without depending on user traffic.
+metrics: 0.0.0.0:2000
+
+ingress:
+  - hostname: sentry.frontir.solutions
+    service: http://webui:8787
+    originRequest:
+      # Chat streams token-by-token over SSE. Chunked encoding must stay on or
+      # the whole turn buffers and the UI looks hung until it completes.
+      disableChunkedEncoding: false
+      # A turn can think for a long time before its first token. The default
+      # would cut a slow turn off mid-stream.
+      connectTimeout: 30s
+      # Keepalives stop an idle SSE stream being reaped between tokens.
+      keepAliveTimeout: 90s
+      keepAliveConnections: 100
+      # The origin is a plain-HTTP container on the compose network; the public
+      # leg is TLS to Cloudflare's edge.
+      noTLSVerify: false
+      httpHostHeader: sentry.frontir.solutions
+
+  # Anything that is not the hostname above gets nothing. Without this catch-all
+  # cloudflared refuses to start, which is the behaviour we want: no default
+  # route means no accidental exposure of another service on this network.
+  - service: http_status:404

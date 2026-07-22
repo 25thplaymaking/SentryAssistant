@@ -33,6 +33,10 @@ local.settings.json
 *.pfx
 *.p12
 *.pem
+# Cloudflare Tunnel credentials. The tunnel's ingress config IS committed
+# (deploy/linux/cloudflared/config.yml); its credentials never are.
+deploy/linux/cloudflared/creds.json
+deploy/linux/cloudflared/*.json
 *.key
 
 # Voice recordings and generated audio
