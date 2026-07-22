@@ -238,6 +238,12 @@ services:
     image: cloudflare/cloudflared:2026.7.2
     restart: unless-stopped
     depends_on: [webui]
+    # The image defaults to its own `nonroot` uid (65532), which cannot read a
+    # 0600 credentials file owned by the host operator — cloudflared then
+    # crash-loops on "permission denied" forever. Run as the same host owner the
+    # bind mounts use (same constraint the hermes service solves this way), so
+    # the secret stays 0600 instead of being widened for the container.
+    user: "${HERMES_UID:-1000}:${HERMES_GID:-1000}"
     # The tunnel ID is not a secret (the credentials file is), but it is
     # per-deployment, so it comes from .env rather than being baked in here.
     command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run ${SENTRY_TUNNEL_ID:?SENTRY_TUNNEL_ID is required}
