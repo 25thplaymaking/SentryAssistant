@@ -18,11 +18,16 @@
 
 .PARAMETER Uninstall
   Remove autostart and stop the app. Does NOT re-enable the legacy task.
+
+.PARAMETER StartMinimized
+  Refresh and verify the installed shell without raising its window over the
+  current desktop session.
 #>
 [CmdletBinding()]
 param(
     [switch]$SkipPublish,
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    [switch]$StartMinimized
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,7 +56,11 @@ function Stop-Shell {
     # mid-start can outlive that; reap any forward matching our ports.
     Start-Sleep -Seconds 2
     Get-CimInstance Win32_Process -Filter "Name='ssh.exe'" |
-        Where-Object { $_.CommandLine -match '\[::1\]:8090:127\.0\.0\.1:8090' } |
+        Where-Object {
+            $_.CommandLine -match '\[::1\]:8090:127\.0\.0\.1:8090' -or
+            $_.CommandLine -match '\[::1\]:8787:127\.0\.0\.1:8787' -or
+            $_.CommandLine -match '\[::1\]:17443:127\.0\.0\.1:7443'
+        } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force; Write-Ok "reaped ssh pid $($_.ProcessId)" }
 }
 
@@ -113,7 +122,8 @@ if ($task) {
     Get-CimInstance Win32_Process -Filter "Name='ssh.exe'" |
         Where-Object {
             $_.CommandLine -match '\[::1\]:8090:127\.0\.0\.1:8090' -or
-            $_.CommandLine -match '\[::1\]:8787:127\.0\.0\.1:8787'
+            $_.CommandLine -match '\[::1\]:8787:127\.0\.0\.1:8787' -or
+            $_.CommandLine -match '\[::1\]:17443:127\.0\.0\.1:7443'
         } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force; Write-Ok "cleared stale forward pid $($_.ProcessId)" }
 } else {
@@ -133,22 +143,28 @@ Write-Ok "shortcut -> $Shortcut"
 # 4. Start + verify ----------------------------------------------------------
 Write-Step 'Starting the shell'
 Stop-Shell
-Start-Process -FilePath $Exe
+if ($StartMinimized) {
+    Start-Process -FilePath $Exe -WindowStyle Minimized
+} else {
+    Start-Process -FilePath $Exe
+}
 Write-Ok 'launched; waiting for the tunnel to come up'
 
 $deadline = (Get-Date).AddSeconds(60)
-$gateway = $webui = 0
+$gateway = $webui = $serverControl = 0
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 5
     try { $gateway = (Invoke-WebRequest "http://[::1]:8090/health/ready" -TimeoutSec 5 -UseBasicParsing).StatusCode } catch { $gateway = 0 }
     try { $webui   = (Invoke-WebRequest "http://[::1]:8787/login"        -TimeoutSec 5 -UseBasicParsing).StatusCode } catch { $webui = 0 }
-    if ($gateway -eq 200 -and $webui -eq 200) { break }
+    try { $serverControl = (Invoke-WebRequest "http://[::1]:17443/server-control/health/live" -TimeoutSec 5 -UseBasicParsing).StatusCode } catch { $serverControl = 0 }
+    if ($gateway -eq 200 -and $webui -eq 200 -and $serverControl -eq 200) { break }
 }
 
 Write-Step 'Result'
 Write-Host ("    Gateway [::1]:8090  -> {0}" -f $(if ($gateway -eq 200) { 'ready' } else { "UNREACHABLE ($gateway)" }))
 Write-Host ("    WebUI   [::1]:8787  -> {0}" -f $(if ($webui   -eq 200) { 'ready' } else { "UNREACHABLE ($webui)" }))
-if ($gateway -eq 200 -and $webui -eq 200) {
+Write-Host ("    Control [::1]:17443 -> {0}" -f $(if ($serverControl -eq 200) { 'ready' } else { "UNREACHABLE ($serverControl)" }))
+if ($gateway -eq 200 -and $webui -eq 200 -and $serverControl -eq 200) {
     Write-Host "`nFrontir Sentry owns its own connection. No PowerShell, no console, no Task Scheduler." -ForegroundColor Green
     Write-Host "It starts automatically at logon and closes to the system tray." -ForegroundColor Green
 } else {
