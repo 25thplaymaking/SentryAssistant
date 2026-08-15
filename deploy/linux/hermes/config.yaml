@@ -89,5 +89,4 @@ gateway:
 
 mcp_servers:
   server-control:
-    command: python3
-    args: ["/opt/sentry-tools/server_control_mcp.py"]
+    url: http://server-control-mcp:8765/mcp

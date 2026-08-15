@@ -41,6 +41,9 @@ services:
         HERMES_UID: ${HERMES_UID:-1000}
         HERMES_GID: ${HERMES_GID:-1000}
     restart: unless-stopped
+    depends_on:
+      server-control-mcp:
+        condition: service_healthy
     environment:
       HERMES_HOME: /home/hermes/.hermes
       API_SERVER_ENABLED: "true"
@@ -62,8 +65,6 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      SERVER_CONTROL_API_URL: http://host.docker.internal:7444/server-control/api/automation
-      SERVER_CONTROL_TOKEN_FILE: /run/secrets/server-control-token
     volumes:
       # One writable runtime data directory per profile. Never shared.
       - ./data/hermes/personal:/home/hermes/.hermes
@@ -76,15 +77,45 @@ services:
       # ./data/hermes/personal unshared. Bound into the webui at the same path so
       # the session metadata is true in both environments.
       - ./data/workspace:/workspace
-      - /opt/server-control/data/hermes-automation.token:/run/secrets/server-control-token:ro
     # Deliberately no `ports:` block. Only the Gateway may reach the runtime.
     expose:
       - "8642"
     security_opt:
       - no-new-privileges:true
+    networks: [sentry, server-control-tools]
+
+  server-control-mcp:
+    image: sentry-hermes
+    build:
+      context: ./hermes
+      args:
+        HERMES_VERSION: ${HERMES_VERSION:-0.19.0}
+        HERMES_UID: ${HERMES_UID:-1000}
+        HERMES_GID: ${HERMES_GID:-1000}
+    restart: unless-stopped
+    command: ["python3", "/opt/sentry-tools/server_control_mcp.py", "--http"]
+    environment:
+      SERVER_CONTROL_API_URL: http://host.docker.internal:7444/server-control/api/automation
+      SERVER_CONTROL_TOKEN_FILE: /run/secrets/server-control-token
+    volumes:
+      - /opt/server-control/data/hermes-automation.token:/run/secrets/server-control-token:ro
+    expose:
+      - "8765"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    networks: [sentry]
+    networks: [server-control-tools]
 
   gateway:
     build:
@@ -266,4 +297,6 @@ services:
 
 networks:
   sentry:
+    driver: bridge
+  server-control-tools:
     driver: bridge

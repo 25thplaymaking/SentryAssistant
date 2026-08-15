@@ -12,6 +12,8 @@ import sys
 import urllib.error
 import urllib.request
 
+from aiohttp import web
+
 BASE_URL = os.environ.get(
     "SERVER_CONTROL_API_URL",
     "http://host.docker.internal:7444/server-control/api/automation",
@@ -118,10 +120,33 @@ def handle(message: dict) -> dict | None:
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "Method not found"}}
 
 
-for line in sys.stdin:
+def run_stdio() -> None:
+    for line in sys.stdin:
+        try:
+            response = handle(json.loads(line))
+            if response is not None:
+                print(json.dumps(response, separators=(",", ":")), flush=True)
+        except Exception as error:
+            print(json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32603, "message": str(error)[:500]}}), flush=True)
+
+
+async def http_mcp(request: web.Request) -> web.Response:
+    if request.content_length is not None and request.content_length > 65536:
+        raise web.HTTPRequestEntityTooLarge(max_size=65536, actual_size=request.content_length)
     try:
-        response = handle(json.loads(line))
-        if response is not None:
-            print(json.dumps(response, separators=(",", ":")), flush=True)
+        message = await request.json()
+        response = handle(message)
     except Exception as error:
-        print(json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32603, "message": str(error)[:500]}}), flush=True)
+        response = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": str(error)[:500]}}
+    return web.json_response(response or {}, status=202 if response is None else 200)
+
+
+def run_http() -> None:
+    app = web.Application(client_max_size=65536)
+    app.router.add_post("/mcp", http_mcp)
+    app.router.add_get("/health", lambda _: web.json_response({"status": "healthy"}))
+    web.run_app(app, host="0.0.0.0", port=int(os.environ.get("SERVER_CONTROL_MCP_PORT", "8765")))
+
+
+if __name__ == "__main__":
+    run_http() if "--http" in sys.argv else run_stdio()
