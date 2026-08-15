@@ -49,8 +49,13 @@ function Write-Warn([string]$m) { Write-Host "    $m" -ForegroundColor Yellow }
 
 function Stop-Shell {
     Get-Process FrontirSentry -ErrorAction SilentlyContinue | ForEach-Object {
-        Stop-Process -Id $_.Id -Force
-        Write-Ok "stopped running shell (pid $($_.Id))"
+        $shellPid = $_.Id
+        Stop-Process -Id $shellPid -Force
+        Wait-Process -Id $shellPid -Timeout 15 -ErrorAction SilentlyContinue
+        if (Get-Process -Id $shellPid -ErrorAction SilentlyContinue) {
+            throw "Frontir Sentry pid $shellPid did not exit; refusing to overwrite a running install."
+        }
+        Write-Ok "stopped running shell (pid $shellPid)"
     }
     # The tunnel's job object kills its ssh with it, but a shell killed
     # mid-start can outlive that; reap any forward matching our ports.
@@ -156,7 +161,10 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 5
     try { $gateway = (Invoke-WebRequest "http://[::1]:8090/health/ready" -TimeoutSec 5 -UseBasicParsing).StatusCode } catch { $gateway = 0 }
     try { $webui   = (Invoke-WebRequest "http://[::1]:8787/login"        -TimeoutSec 5 -UseBasicParsing).StatusCode } catch { $webui = 0 }
-    try { $serverControl = (Invoke-WebRequest "http://[::1]:17443/server-control/health/live" -TimeoutSec 5 -UseBasicParsing).StatusCode } catch { $serverControl = 0 }
+    # The pre-recovery Server Control release does not yet allow an IPv6 Host
+    # header. Use its already-allowed loopback host while still traversing the
+    # new IPv6 local forward; the signed recovery release adds [::1] itself.
+    try { $serverControl = (Invoke-WebRequest "http://[::1]:17443/server-control/health/live" -Headers @{ Host = '127.0.0.1' } -TimeoutSec 5 -UseBasicParsing).StatusCode } catch { $serverControl = 0 }
     if ($gateway -eq 200 -and $webui -eq 200 -and $serverControl -eq 200) { break }
 }
 
