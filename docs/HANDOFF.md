@@ -37,7 +37,7 @@ Gateway as a read-only secret; Server Control reads the host file as root.
 
 ## Deployment order
 
-1. **Done:** Grain Sentry is at `72317f8`; WebUI is at `b8b9042c`.
+1. **Done:** Grain Sentry recovery code is deployed; WebUI is at `b8b9042c`.
 2. **Done:** migration 010 and the owner-only recovery key are provisioned;
    Gateway, WebUI, Hermes, and the Server Control MCP sidecar are healthy.
 3. **Root gate:** install the previously staged Server Control v3 bootstrap,
