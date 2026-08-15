@@ -41,7 +41,7 @@ Gateway as a read-only secret; Server Control reads the host file as root.
 2. **Done:** migration 010 and the owner-only recovery key are provisioned;
    Gateway, WebUI, Hermes, and the Server Control MCP sidecar are healthy.
 3. **Root gate:** install the previously staged Server Control v3 bootstrap,
-   then apply signed release `20260815-044000-sentry-recovery` already present
+   then apply signed release `20260815-045000-sentry-recovery-ipv6` already present
    in `/home/bishop/server-control-signed-inbox`.
 4. Verify Server Control Settings can issue a code, use it once in Sentry, and
    confirm both reuse and an old Sentry session are rejected.
@@ -58,6 +58,9 @@ not prove activation.
 - Server Control frontend: lint passed, 3 tests passed, production build
   passed.
 - Sentry desktop shell: Release build passed with zero warnings and errors.
+- The refreshed local shell is installed and running minimized; Gateway,
+  WebUI, and Server Control IPv6 forwards all returned HTTP 200 (the Control
+  probe uses its pre-release allowed Host header until the signed update lands).
 - Docker Compose configuration and production JSON parsing passed.
 
 On this Windows host, the repository's Bash wrapper cannot run because WSL is
