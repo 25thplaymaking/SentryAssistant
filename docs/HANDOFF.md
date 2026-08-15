@@ -18,7 +18,8 @@ not current deployment instructions.
 
 ## Password-recovery increment
 
-The implementation is complete locally across three workspaces:
+The implementation is complete across three workspaces. Gateway and WebUI are
+live on Grain; Server Control is signed and staged behind the root gate:
 
 - Gateway: operator-authorized recovery-code creation, hashed single-use
   codes, ten-minute expiry, password-policy enforcement, audit records, and
@@ -36,11 +37,12 @@ Gateway as a read-only secret; Server Control reads the host file as root.
 
 ## Deployment order
 
-1. Push and fast-forward `/srv/sentry/repo` and `/srv/sentry/webui`.
-2. In `/srv/sentry/repo/deploy/linux`, run
-   `./provision-recovery-bridge.sh` as `bishop`.
-3. Publish and install the current Server Control release through its signed,
-   root-owned update workflow.
+1. **Done:** Grain Sentry is at `72317f8`; WebUI is at `b8b9042c`.
+2. **Done:** migration 010 and the owner-only recovery key are provisioned;
+   Gateway, WebUI, Hermes, and the Server Control MCP sidecar are healthy.
+3. **Root gate:** install the previously staged Server Control v3 bootstrap,
+   then apply signed release `20260815-044000-sentry-recovery` already present
+   in `/home/bishop/server-control-signed-inbox`.
 4. Verify Server Control Settings can issue a code, use it once in Sentry, and
    confirm both reuse and an old Sentry session are rejected.
 
@@ -52,7 +54,7 @@ not prove activation.
 
 - Gateway full suite: 366 passed.
 - Frontir WebUI Sentry-specific suite: 115 passed.
-- Server Control backend: 47 passed.
+- Server Control backend: 48 passed in the isolated release build.
 - Server Control frontend: lint passed, 3 tests passed, production build
   passed.
 - Sentry desktop shell: Release build passed with zero warnings and errors.
