@@ -19,6 +19,15 @@
 
 servers:
 
+  server-control:
+    description: >-
+      Read service status and request start, stop, or restart for an existing
+      Server Control allowlisted target. No shell, arbitrary process, delete,
+      or free-form server creation access.
+    command: python3
+    args: ["/opt/sentry-tools/server_control_mcp.py"]
+    risk: medium
+
   filesystem:
     description: >-
       Read and write files under the agent's own /workspace. Scoped to that path

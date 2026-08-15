@@ -62,6 +62,8 @@ RUN pip install --no-cache-dir --user mcp
 COPY --chown=hermes:hermes patches/api_server_mcp_discovery.py /tmp/
 RUN python3 /tmp/api_server_mcp_discovery.py
 
+COPY --chown=hermes:hermes server_control_mcp.py /opt/sentry-tools/server_control_mcp.py
+
 EXPOSE 8642
 
 # The API server binds loopback by default; inside a container it must bind the

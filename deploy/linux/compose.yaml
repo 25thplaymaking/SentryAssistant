@@ -62,6 +62,8 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      SERVER_CONTROL_API_URL: http://host.docker.internal:7444/server-control/api/automation
+      SERVER_CONTROL_TOKEN_FILE: /run/secrets/server-control-token
     volumes:
       # One writable runtime data directory per profile. Never shared.
       - ./data/hermes/personal:/home/hermes/.hermes
@@ -74,11 +76,14 @@ services:
       # ./data/hermes/personal unshared. Bound into the webui at the same path so
       # the session metadata is true in both environments.
       - ./data/workspace:/workspace
+      - /opt/server-control/data/hermes-automation.token:/run/secrets/server-control-token:ro
     # Deliberately no `ports:` block. Only the Gateway may reach the runtime.
     expose:
       - "8642"
     security_opt:
       - no-new-privileges:true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks: [sentry]
 
   gateway:

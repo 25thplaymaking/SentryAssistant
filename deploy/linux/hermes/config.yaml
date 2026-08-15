@@ -86,3 +86,8 @@ api_server:
 gateway:
   # Unknown senders are denied. No allow-all.
   allow_all_users: false
+
+mcp_servers:
+  server-control:
+    command: python3
+    args: ["/opt/sentry-tools/server_control_mcp.py"]
