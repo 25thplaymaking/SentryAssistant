@@ -164,3 +164,4 @@ class AttemptThrottle:
 
 #: Shared by the login route. Module-level so it survives across requests.
 LOGIN_THROTTLE = AttemptThrottle()
+RECOVERY_THROTTLE = AttemptThrottle(limit=6, window_seconds=60)

@@ -1,24 +1,57 @@
-# Sentry Assistant
+# Frontir Sentry
 
-Sentry Assistant is Bryce's local Windows personal assistant and code watcher.
+Frontir Sentry is a private, per-user assistant platform. The Windows desktop
+shell opens SSH forwards to Grain and hosts the Frontir WebUI; the WebUI uses
+the Sentry Gateway for identity and profile-scoped access; the Gateway routes
+each signed-in person to their own Hermes runtime.
 
-## First milestone
+## Active components
 
-- Native WinUI 3 dashboard with Assistant, Code watcher, Activity, and Settings pages.
-- OpenAI Responses-based conversation with recent-message context.
-- Push-to-talk voice replies that are transcribed into the message box for review before sending.
-- One-sentence Jarvis-style spoken summaries with selectable OpenAI voices.
-- Recursive folder watching with noise filtering and duplicate-event suppression.
-- API key imported from the earlier Sentry Voice tool and protected with Windows DPAPI for the current user.
-- Light, dark, high-contrast, keyboard, mouse, and touch behavior inherited from native WinUI controls.
+- `server/sentry_gateway`: FastAPI identity, authorization, audit, profile,
+  management, and runtime-routing boundary.
+- `deploy/linux`: loopback-only PostgreSQL, Gateway, Hermes, WebUI, and
+  Cloudflare Tunnel deployment.
+- `tools/SentryShell`: Windows WebView2 shell and SSH tunnel manager.
+- `docs`: architecture, handoffs, plans, and operational runbooks.
 
-## Local development
+The WebUI fork is checked out separately at
+`C:\Users\Bryce\Desktop\SentryWebUI` on its `frontir` branch.
 
-Use the 64-bit .NET SDK on this machine:
+## Password recovery
 
-```powershell
-& 'C:\Program Files\dotnet\dotnet.exe' build .\SentryAssistant.csproj -c Debug -p:Platform=x64
-& 'C:\Program Files\dotnet\dotnet.exe' run --project .\SentryAssistant.csproj -c Debug -p:Platform=x64
+Password recovery is deliberately split across two authenticated surfaces:
+
+1. Sign in to Server Control with its password and authenticator code.
+2. In **Settings → Sentry account recovery**, create a ten-minute, single-use
+   code for the Sentry username.
+3. In the Sentry sign-in window, choose **Forgot password?** and enter that
+   code with the new password.
+
+Server Control never receives the new password. The Gateway stores only a hash
+of the recovery code, invalidates earlier active codes, and revokes every old
+Sentry device and refresh token when the password changes. A dedicated random
+file authorizes only code creation; it cannot sign sessions.
+
+To provision the database table and shared file on Grain after both repos are
+deployed:
+
+```bash
+cd /srv/sentry/repo/deploy/linux
+./provision-recovery-bridge.sh
 ```
 
-The app is packaged and launched through the Windows App Development CLI included by the current Microsoft template.
+The script preserves an existing key, applies the idempotent migration, and
+rebuilds the Gateway. Server Control reads the same host file at the path in
+its Grain production configuration.
+
+## Development checks
+
+Use the x64 .NET SDK on this machine:
+
+```powershell
+& .\server\sentry_gateway\.venv\Scripts\python.exe -m pytest .\server\sentry_gateway\tests
+& 'C:\Program Files\dotnet\dotnet.exe' build .\tools\SentryShell\SentryShell.csproj -c Release
+```
+
+Gateway tests use the Python environment under `server/sentry_gateway`. See
+`docs/HANDOFF.md` for the current verified commands and deployment boundary.

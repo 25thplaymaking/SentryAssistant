@@ -20,6 +20,8 @@ internal sealed class Tunnel : IDisposable
     private const string RemoteAddr  = "127.0.0.1";   // loopback on the SERVER, where IPv4 works
     internal const int   GatewayPort = 8090;
     internal const int   WebUiPort   = 8787;
+    internal const int   ServerControlLocalPort = 17443;
+    private const int    ServerControlRemotePort = 7443;
 
     // MUST bind [::1], not 127.0.0.1. IPv4 loopback is broken on this machine:
     // a client "connects" to 127.0.0.1 but is silently forced onto the IPv6
@@ -179,7 +181,12 @@ internal sealed class Tunnel : IDisposable
         {
             args.Add("-L"); args.Add($"{BindAddr}:{GatewayPort}:{RemoteAddr}:{GatewayPort}");
         }
-        // Both forwards ride one connection. ExitOnForwardFailure also means a
+        if (Config.ForwardServerControl)
+        {
+            args.Add("-L");
+            args.Add($"{BindAddr}:{ServerControlLocalPort}:{RemoteAddr}:{ServerControlRemotePort}");
+        }
+        // The forwards ride one connection. ExitOnForwardFailure also means a
         // port already in use fails the dial rather than silently bringing up a
         // half-working tunnel.
         args.Add("-L"); args.Add($"{BindAddr}:{WebUiPort}:{RemoteAddr}:{WebUiPort}");

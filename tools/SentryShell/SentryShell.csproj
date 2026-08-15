@@ -33,4 +33,13 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3351.48" />
   </ItemGroup>
 
+  <!-- WebView2's targets add both UI adapters after project items are
+       evaluated. Remove the unused WPF adapter at reference-resolution time;
+       otherwise it introduces a WindowsBase 4.0/5.0 conflict on .NET 10. -->
+  <Target Name="RemoveUnusedWebView2WpfReference" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Reference.Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
 </Project>

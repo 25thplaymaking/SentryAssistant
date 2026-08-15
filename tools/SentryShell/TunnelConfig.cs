@@ -33,6 +33,13 @@ internal sealed class TunnelConfig
     /// </summary>
     public bool ForwardGateway { get; init; } = true;
 
+    /// <summary>
+    /// Give the owner's app a local route to the MFA-protected Server Control
+    /// portal. Teammate packages keep this off because their forwarding-only
+    /// SSH accounts are intentionally restricted to the Sentry WebUI.
+    /// </summary>
+    public bool ForwardServerControl { get; init; } = true;
+
     /// <summary>Shown in the window title so a tester knows which install they are running.</summary>
     public string DisplayName { get; init; } = "";
 

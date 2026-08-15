@@ -8,6 +8,7 @@ file that is not in Git.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -27,6 +28,13 @@ class Settings(BaseSettings):
         default="",
         description="HMAC key for access, node, and work-order tokens.",
     )
+
+    #: Dedicated credential for the MFA-protected Server Control recovery
+    #: bridge.  Keep this separate from the signing key: the portal may mint a
+    #: short-lived recovery code, but it must never be able to sign Sentry
+    #: sessions.  The secret is read from a mounted file so it does not appear
+    #: in Compose environment inspection.
+    recovery_key_file: str = ""
 
     #: Hermes administration stays on loopback and is never proxied publicly.
     #: 8642 is the Hermes API server default.
@@ -73,6 +81,15 @@ class Settings(BaseSettings):
     @property
     def has_signing_key(self) -> bool:
         return bool(self.signing_key)
+
+    def load_recovery_key(self) -> str:
+        if not self.recovery_key_file:
+            return ""
+        try:
+            value = Path(self.recovery_key_file).read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError):
+            return ""
+        return value if len(value.encode("utf-8")) >= MIN_SIGNING_KEY_BYTES else ""
 
 
 @lru_cache

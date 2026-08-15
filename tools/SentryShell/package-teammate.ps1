@@ -109,6 +109,7 @@ Step 'Writing sentry.json'
     sshTarget      = "$SshUser@$Server"
     identityFile   = "sentry-$Slug"   # resolved next to the exe at runtime
     forwardGateway = $false           # teammates get the WebUI port only
+    forwardServerControl = $false     # Server Control is owner/admin-only
     displayName    = $DisplayName
 } | ConvertTo-Json | Set-Content (Join-Path $PkgDir 'sentry.json') -Encoding UTF8
 Ok 'configured for the WebUI port only'

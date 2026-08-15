@@ -120,6 +120,10 @@ services:
   gateway:
     build:
       context: ../../server/sentry_gateway
+    # The recovery secret is created by the host operator with mode 0600.
+    # Compose file-backed secrets retain host ownership on Linux, so run as the
+    # same non-root UID/GID used by the other Sentry containers.
+    user: "${HERMES_UID:-1000}:${HERMES_GID:-1000}"
     restart: unless-stopped
     depends_on:
       postgres:
@@ -141,6 +145,12 @@ services:
       # Absent -> the gateway registers only the bootstrap profile (current
       # behaviour); present -> provisioned per-profile endpoints load at startup.
       SENTRY_RUNTIME_ENC_KEY: ${SENTRY_RUNTIME_ENC_KEY:-}
+      # Server Control may mint a short-lived password recovery code after its
+      # own administrator has passed MFA. This dedicated key cannot sign Sentry
+      # sessions and is mounted from a file instead of exposed in container env.
+      SENTRY_RECOVERY_KEY_FILE: /run/secrets/sentry_recovery_token
+    secrets:
+      - sentry_recovery_token
     ports:
       # Loopback only. Ingress terminates here, never at Hermes.
       - "127.0.0.1:8090:8090"
@@ -300,3 +310,10 @@ networks:
     driver: bridge
   server-control-tools:
     driver: bridge
+
+secrets:
+  # Compose presents this read-only under /run/secrets while the source stays
+  # mode 0600 on the host. A raw bind mount would be unreadable by the
+  # Gateway's unprivileged container UID.
+  sentry_recovery_token:
+    file: ./data/gateway/sentry-recovery.token

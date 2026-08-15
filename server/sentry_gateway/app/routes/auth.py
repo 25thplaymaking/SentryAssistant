@@ -19,9 +19,10 @@ never has a hole in it for the first caller.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import secrets
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from ..audit.service import AuditEvent, AuditService, Decision
@@ -387,6 +388,242 @@ def _throttle_key(request: Request, username: str) -> str:
 class PasswordChange(BaseModel):
     current_password: str = Field(min_length=1, max_length=passwords.PASSWORD_MAX_LENGTH)
     new_password: str = Field(min_length=1, max_length=passwords.PASSWORD_MAX_LENGTH)
+
+
+class PasswordRecoveryStart(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+
+
+class PasswordRecoveryCodeView(BaseModel):
+    code: str
+    expires_at: datetime
+
+
+class PasswordRecoveryComplete(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    code: str = Field(min_length=1, max_length=100)
+    new_password: str = Field(min_length=1, max_length=passwords.PASSWORD_MAX_LENGTH)
+
+
+_RECOVERY_TTL = timedelta(minutes=10)
+_RECOVERY_FAILED = "Recovery code is invalid or has expired."
+
+
+def _require_recovery_operator(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> None:
+    """Authenticate Server Control without granting it Sentry session power."""
+    settings = getattr(request.app.state, "settings", None)
+    expected = settings.load_recovery_key() if settings is not None else ""
+    if not expected:
+        # Hide an integration that is intentionally disabled.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+    prefix = "Bearer "
+    candidate = (
+        authorization[len(prefix) :].strip()
+        if authorization and authorization.startswith(prefix)
+        else ""
+    )
+    if not candidate or not secrets.compare_digest(candidate, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Recovery operator credential required.",
+        )
+
+
+@router.post(
+    "/password/recovery/start",
+    response_model=PasswordRecoveryCodeView,
+    dependencies=[Depends(_require_recovery_operator)],
+)
+async def start_password_recovery(
+    body: PasswordRecoveryStart, request: Request
+) -> PasswordRecoveryCodeView:
+    """Mint one short-lived code after Server Control has verified its MFA admin."""
+    pool = _pool(request)
+    audit = AuditService(pool)
+    username = body.username.strip().lower()
+    correlation = f"pwrecover-start-{hash_secret(username)[:16]}"
+    code = "-".join(secrets.token_hex(2).upper() for _ in range(3))
+    code_hash = hash_secret(code)
+    expires_at = datetime.now(timezone.utc) + _RECOVERY_TTL
+
+    missing = False
+    user_id: UUID | None = None
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT c.user_id
+                FROM user_passwords c
+                JOIN users u ON u.id = c.user_id
+                WHERE c.username = $1 AND u.disabled_at IS NULL
+                FOR UPDATE OF c
+                """,
+                username,
+            )
+            if row is None:
+                missing = True
+            else:
+                user_id = row["user_id"]
+                # Only the newest unconsumed code should work. This keeps an old
+                # screen or copied code from remaining a second recovery door.
+                await conn.execute(
+                    "UPDATE password_recovery_codes SET consumed_at = now() "
+                    "WHERE user_id = $1 AND consumed_at IS NULL",
+                    user_id,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO password_recovery_codes
+                        (code_hash, user_id, expires_at, approved_by)
+                    VALUES ($1, $2, $3, 'server-control')
+                    """,
+                    code_hash,
+                    user_id,
+                    expires_at,
+                )
+                await audit.record_with(
+                    conn,
+                    AuditEvent(
+                        action="auth.password.recovery.start",
+                        decision=Decision.ALLOWED,
+                        correlation_id=correlation,
+                        target_kind="user",
+                        target_id=str(user_id),
+                        detail="single-use recovery issued by Server Control",
+                    ),
+                )
+
+    if missing:
+        await audit.record(
+            AuditEvent(
+                action="auth.password.recovery.start",
+                decision=Decision.DENIED,
+                correlation_id=correlation,
+                target_kind="user",
+                detail="recovery refused: account was unavailable",
+            )
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sentry account was not found or cannot be recovered.",
+        )
+
+    return PasswordRecoveryCodeView(code=code, expires_at=expires_at)
+
+
+@router.post("/password/recover", status_code=status.HTTP_204_NO_CONTENT)
+async def recover_password(body: PasswordRecoveryComplete, request: Request) -> None:
+    """Consume a Server Control recovery code and revoke every old session."""
+    pool = _pool(request)
+    audit = AuditService(pool)
+    tokens = get_token_service(request)
+    username = body.username.strip().lower()
+    code_hash = hash_secret(body.code.strip().upper())
+    correlation = f"pwrecover-{code_hash[:16]}"
+
+    if not passwords.RECOVERY_THROTTLE.allow(_throttle_key(request, username)):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many recovery attempts. Wait a minute and try again.",
+        )
+    problem = passwords.password_policy_error(body.new_password)
+    if problem:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=problem)
+
+    revoked_devices: list[UUID] = []
+    denied = False
+    denied_user: UUID | None = None
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT r.user_id, r.expires_at, r.consumed_at, u.disabled_at,
+                       c.password_hash
+                FROM password_recovery_codes r
+                JOIN user_passwords c ON c.user_id = r.user_id
+                JOIN users u ON u.id = r.user_id
+                WHERE r.code_hash = $1 AND c.username = $2
+                FOR UPDATE OF r, c
+                """,
+                code_hash,
+                username,
+            )
+            now = datetime.now(timezone.utc)
+            invalid = (
+                row is None
+                or row["consumed_at"] is not None
+                or row["expires_at"] <= now
+                or row["disabled_at"] is not None
+            )
+            if invalid:
+                denied = True
+                denied_user = row["user_id"] if row else None
+            else:
+                if passwords.verify_password(row["password_hash"], body.new_password):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Choose a password different from the previous one.",
+                    )
+                user_id = row["user_id"]
+                await conn.execute(
+                    "UPDATE password_recovery_codes SET consumed_at = now() "
+                    "WHERE code_hash = $1",
+                    code_hash,
+                )
+                await conn.execute(
+                    "UPDATE user_passwords SET password_hash = $2, must_change = FALSE, "
+                    "failed_attempts = 0, locked_until = NULL, updated_at = now() "
+                    "WHERE user_id = $1",
+                    user_id,
+                    passwords.hash_password(body.new_password),
+                )
+                device_rows = await conn.fetch(
+                    "SELECT id FROM devices WHERE user_id = $1 AND revoked_at IS NULL",
+                    user_id,
+                )
+                revoked_devices = [item["id"] for item in device_rows]
+                await conn.execute(
+                    "UPDATE devices SET revoked_at = now() "
+                    "WHERE user_id = $1 AND revoked_at IS NULL",
+                    user_id,
+                )
+                await conn.execute(
+                    "UPDATE refresh_tokens SET revoked_at = now() "
+                    "WHERE user_id = $1 AND revoked_at IS NULL",
+                    user_id,
+                )
+                await audit.record_with(
+                    conn,
+                    AuditEvent(
+                        action="auth.password.recovery.complete",
+                        decision=Decision.ALLOWED,
+                        correlation_id=correlation,
+                        actor_user_id=user_id,
+                        target_kind="user",
+                        target_id=str(user_id),
+                        detail="account recovered; prior devices revoked",
+                    ),
+                )
+
+    if denied:
+        await audit.record(
+            AuditEvent(
+                action="auth.password.recovery.complete",
+                decision=Decision.DENIED,
+                correlation_id=correlation,
+                actor_user_id=denied_user,
+                target_kind="user",
+                target_id=str(denied_user) if denied_user else None,
+                detail="recovery refused: code was unavailable",
+            )
+        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_RECOVERY_FAILED)
+
+    for device_id in revoked_devices:
+        tokens.revoke_device(str(device_id))
 
 
 @router.post("/password/login", response_model=PasswordTokenPair)
