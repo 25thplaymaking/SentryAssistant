@@ -64,6 +64,15 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # A Claude SUBSCRIPTION (Pro/Max), as opposed to metered API billing.
+      # `claude setup-token` on a machine already signed in mints a long-lived
+      # token intended for exactly this; the anthropic provider accepts it
+      # directly (its env_vars list it alongside ANTHROPIC_API_KEY).
+      #
+      # Passed here so the token lives in .env rather than being pasted into a
+      # config file that gets copied, diffed and backed up. Empty by default,
+      # so leaving it unset changes nothing.
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes:
       # One writable runtime data directory per profile. Never shared.

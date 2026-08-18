@@ -43,6 +43,11 @@ SUBSCRIPTION_PROVIDERS = {
     "anthropic": {
         "label": "Claude subscription",
         "default_alias": "claude-subscription",
+        # Alternative to the OAuth flow: `claude setup-token` mints a
+        # long-lived subscription token, and the anthropic provider reads it
+        # straight from the environment. Set it in .env and this script only
+        # has to publish the route.
+        "env_token": "CLAUDE_CODE_OAUTH_TOKEN",
     },
     "openai-codex": {
         "label": "ChatGPT / Codex subscription",
@@ -106,6 +111,19 @@ def provider_is_authenticated(provider: str) -> bool:
     this wrong in the optimistic direction publishes an unreachable option into
     the picker, which is the exact defect the routing design exists to prevent.
     """
+    # An environment token counts as authenticated: the provider resolves its
+    # credential from the env chain, so requiring an OAuth entry in the auth
+    # store as well would refuse a setup that works.
+    env_var = SUBSCRIPTION_PROVIDERS.get(provider, {}).get("env_token")
+    if env_var:
+        # Markers must not be substrings of one another: "SET" in "UNSET" is
+        # True, which reported an unset token as authenticated and would have
+        # published a route to a provider with no credential.
+        probe = compose("exec", "-T", "hermes", "sh", "-c",
+                        f'test -n "${env_var}" && echo token_present || echo token_absent')
+        if "token_present" in (probe.stdout or ""):
+            return True
+
     proc = compose("exec", "-T", "hermes", "hermes", "auth", "list")
     if proc.returncode != 0:
         return False

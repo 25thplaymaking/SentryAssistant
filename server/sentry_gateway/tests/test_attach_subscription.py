@@ -147,3 +147,30 @@ class TestAuthDetection:
     def test_empty_and_garbage_yield_nothing(self):
         assert attach.parse_authenticated_providers("") == set()
         assert attach.parse_authenticated_providers("no credentials configured") == set()
+
+
+class TestEnvTokenDetection:
+    """A subscription token in the environment counts as authenticated.
+
+    `claude setup-token` mints a long-lived subscription token that the
+    anthropic provider reads straight from the env chain, so requiring an OAuth
+    entry in Hermes' auth store as well would refuse a setup that works.
+
+    The marker test exists because the first version probed with SET/UNSET and
+    checked `"SET" in output` -- and "SET" is a substring of "UNSET", so an
+    ABSENT token reported as authenticated. That would publish a route to a
+    provider holding no credential: an option in the picker that cannot answer,
+    which is the exact defect the routing design exists to prevent.
+    """
+
+    def test_anthropic_declares_its_env_token(self):
+        assert attach.SUBSCRIPTION_PROVIDERS["anthropic"]["env_token"] == "CLAUDE_CODE_OAUTH_TOKEN"
+
+    def test_probe_markers_are_not_substrings_of_each_other(self):
+        import inspect
+        src = inspect.getsource(attach.provider_is_authenticated)
+        assert "token_present" in src and "token_absent" in src
+        assert "token_present" not in "token_absent"
+
+    def test_codex_has_no_env_token_and_must_use_oauth(self):
+        assert "env_token" not in attach.SUBSCRIPTION_PROVIDERS["openai-codex"]
