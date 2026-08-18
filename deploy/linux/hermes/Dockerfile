@@ -47,7 +47,25 @@ RUN pip install --no-cache-dir --user aiohttp
 # tools/mcp_tool.py sets _MCP_AVAILABLE=False and register_mcp_servers() returns
 # an empty list, so every configured MCP server is silently ignored. Verified on
 # 0.19.0: with the SDK installed the same config registered 14 tools.
-RUN pip install --no-cache-dir --user mcp
+#
+# PINNED, and the pin is load-bearing (2026-08-18). This line used to be a bare
+# `mcp`, and because it is an *optional* extra pip does not enforce the
+# `mcp==1.26.0` that hermes-agent 0.19.0 declares -- so the Aug 15 build silently
+# picked up mcp 2.0.0 and MCP broke in a way that looks like a config error:
+#
+#   - 2.0.0 removed the deprecated `streamablehttp_client` symbol. mcp_tool.py
+#     derives its _MCP_HTTP_AVAILABLE flag from THAT name only, so HTTP
+#     transport reported itself unavailable and every streamable-http server
+#     failed with "Upgrade the mcp package to get HTTP support" -- while the
+#     package was in fact NEWER than required.
+#   - Forcing past that flag only reaches the next break: 2.0.0's
+#     `streamable_http_client` yields 2 values where 0.19.0 unpacks 3
+#     ("not enough values to unpack (expected 3, got 2)").
+#
+# Keep this pin matched to whatever hermes-agent's METADATA requires; check with
+#   pip show -f hermes-agent | grep -i "requires-dist.*mcp"
+# after any HERMES_VERSION bump.
+RUN pip install --no-cache-dir --user 'mcp==1.26.0'
 
 # Fix the api_server path so configured MCP servers reach the agent.
 #
