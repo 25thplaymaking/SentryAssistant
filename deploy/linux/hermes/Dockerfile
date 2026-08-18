@@ -67,6 +67,22 @@ RUN pip install --no-cache-dir --user aiohttp
 # after any HERMES_VERSION bump.
 RUN pip install --no-cache-dir --user 'mcp==1.26.0'
 
+# Web search backend. The `web` toolset ships ENABLED but is gated shut by
+# check_web_api_key(): with no backend credential and no importable provider it
+# reports unavailable, and web_search/web_extract silently never register. The
+# agent then has no internet access at all, which looks like a model limitation
+# rather than a missing dependency.
+#
+# ddgs is the only supported backend whose availability is decided by a PACKAGE
+# rather than an API key (_ddgs_package_importable), so it needs no account, no
+# secret in .env, and no per-user signup. The keyed alternatives
+# (TAVILY/EXA/BRAVE_SEARCH/FIRECRAWL/PARALLEL_API_KEY) and self-hosted
+# SEARXNG_URL still work and take precedence when set.
+#
+# PINNED for the same reason `mcp` is: an unpinned optional dependency is how
+# this image silently acquired an incompatible major version once already.
+RUN pip install --no-cache-dir --user 'ddgs==9.6.0'
+
 # Fix the api_server path so configured MCP servers reach the agent.
 #
 # Hermes calls discover_mcp_tools() before building the agent on the CLI, TUI and
