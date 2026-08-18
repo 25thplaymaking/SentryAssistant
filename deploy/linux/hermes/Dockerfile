@@ -96,6 +96,21 @@ RUN pip install --no-cache-dir --user 'ddgs==9.6.0'
 COPY --chown=hermes:hermes patches/api_server_mcp_discovery.py /tmp/
 RUN python3 /tmp/api_server_mcp_discovery.py
 
+# Add the Sentry admin HTTP surface: credential OAuth and pending-write approval.
+#
+# Hermes keeps both in the CLI. That is fine for a single-box install and fatal
+# for this one: the WebUI container never loads the agent, so a CLI-only OAuth
+# flow needs a TTY on the server, and memory writes staged by
+# `memory.write_approval: true` pile up on disk with nothing able to approve
+# them. The handlers reuse Hermes' own OAuth constants, credential-pool
+# persistence and write_approval store rather than reimplementing any of it.
+#
+# Like the MCP patch above, this FAILS THE BUILD if its anchor moves, so an
+# upgrade cannot quietly restore the unreachable state it exists to fix.
+COPY --chown=hermes:hermes sentry_admin.py /home/hermes/.local/lib/python3.11/site-packages/sentry_admin.py
+COPY --chown=hermes:hermes patches/api_server_admin_surface.py /tmp/
+RUN python3 /tmp/api_server_admin_surface.py
+
 COPY --chown=hermes:hermes server_control_mcp.py /opt/sentry-tools/server_control_mcp.py
 
 EXPOSE 8642

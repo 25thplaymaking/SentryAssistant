@@ -24,6 +24,7 @@ from .agent_runtime.hermes import HermesInstance, HermesRuntime
 from .auth.tokens import TokenService
 from .config import Settings, get_settings
 from .routes import admin as admin_routes
+from .routes import agent_admin as agent_admin_routes
 from .routes import agent_messages as agent_messages_routes
 from .routes import auth as auth_routes
 from .routes import chat as chat_routes
@@ -144,6 +145,7 @@ app = FastAPI(
 
 
 app.include_router(admin_routes.router)
+app.include_router(agent_admin_routes.router)
 app.include_router(auth_routes.router)
 app.include_router(chat_routes.router)
 app.include_router(profiles_routes.router)

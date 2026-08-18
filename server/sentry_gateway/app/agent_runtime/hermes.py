@@ -201,6 +201,35 @@ class UnknownProfileError(KeyError):
     """Raised when no Hermes instance is registered for a profile."""
 
 
+class AdminSurfaceUnavailable(RuntimeError):
+    """Raised when a Sentry admin-surface call cannot be completed.
+
+    Carries the status the caller should surface. The distinction that matters
+    is 501 (this runtime has no admin surface — rebuild the Hermes image) versus
+    a real upstream failure, because they call for completely different fixes
+    and collapsing them into one error is how the missing surface stayed
+    invisible in the first place.
+    """
+
+    def __init__(self, message: str, *, status_code: int = 502) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _admin_error_message(body: Any) -> str:
+    """Pull the human-readable message out of an admin-surface error body."""
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+        detail = body.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+    return "Agent runtime rejected the request."
+
+
 class HermesRuntime(AgentRuntime):
     def __init__(
         self,
@@ -602,6 +631,119 @@ class HermesRuntime(AgentRuntime):
             },
         )
         response.raise_for_status()
+
+    # ------------------------------------------------------------------
+    # Sentry admin surface (patched into Hermes' api_server)
+    # ------------------------------------------------------------------
+    # These proxy the endpoints added by deploy/linux/hermes/sentry_admin.py.
+    # They are NOT part of the RuntimeProtocol: a runtime without the patch
+    # simply lacks the methods, and the routes report that as unavailable
+    # rather than every runtime having to implement an OAuth flow.
+    #
+    # Errors surface as AdminSurfaceUnavailable carrying the upstream status,
+    # so a 404 (patch missing) reads differently from a 502 (provider refused
+    # the code) instead of collapsing into one opaque failure.
+
+    async def _admin_request(
+        self,
+        profile_id: UUID,
+        method: str,
+        path: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
+    ) -> Any:
+        instance = self._instance(profile_id)
+        try:
+            response = await self._client.request(
+                method,
+                instance.url(path),
+                headers=instance.auth_header,
+                json=json_body,
+                params=params,
+            )
+        except httpx.HTTPError as exc:
+            raise AdminSurfaceUnavailable(
+                f"Agent runtime unreachable: {type(exc).__name__}", status_code=503
+            ) from exc
+
+        if response.status_code == 404 and "/v1/pending" in path:
+            # Distinguish "no such pending id" from "route not registered".
+            # The patched surface always answers with a JSON error object.
+            try:
+                body = response.json()
+            except ValueError:
+                raise AdminSurfaceUnavailable(
+                    "This agent runtime has no Sentry admin surface. Rebuild the "
+                    "Hermes image so patches/api_server_admin_surface.py is applied.",
+                    status_code=501,
+                ) from None
+            raise AdminSurfaceUnavailable(_admin_error_message(body), status_code=404)
+
+        if response.status_code >= 400:
+            try:
+                body = response.json()
+            except ValueError:
+                body = None
+            if body is None:
+                raise AdminSurfaceUnavailable(
+                    "This agent runtime has no Sentry admin surface. Rebuild the "
+                    "Hermes image so patches/api_server_admin_surface.py is applied.",
+                    status_code=501,
+                )
+            raise AdminSurfaceUnavailable(
+                _admin_error_message(body), status_code=response.status_code
+            )
+
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise AdminSurfaceUnavailable(
+                "Agent runtime returned a non-JSON response.", status_code=502
+            ) from exc
+
+    async def list_pending_writes(self, profile_id: UUID, subsystem: str) -> dict:
+        """Staged agent memory/skill writes awaiting approval."""
+        return await self._admin_request(profile_id, "GET", f"/v1/pending/{subsystem}")
+
+    async def decide_pending_write(
+        self, profile_id: UUID, subsystem: str, pending_id: str, *, approve: bool
+    ) -> dict:
+        """Apply or discard one staged write."""
+        decision = "approve" if approve else "reject"
+        return await self._admin_request(
+            profile_id, "POST", f"/v1/pending/{subsystem}/{pending_id}/{decision}"
+        )
+
+    async def list_auth_providers(self, profile_id: UUID) -> dict:
+        """Credential providers this profile knows about, and which are logged in."""
+        return await self._admin_request(profile_id, "GET", "/v1/auth/providers")
+
+    async def start_oauth(self, profile_id: UUID, provider: str) -> dict:
+        """Begin a browser OAuth login; returns the authorize URL and a flow id."""
+        return await self._admin_request(
+            profile_id, "POST", "/v1/auth/oauth/start", json_body={"provider": provider}
+        )
+
+    async def complete_oauth(
+        self, profile_id: UUID, flow_id: str, code: str, label: str | None = None
+    ) -> dict:
+        """Exchange the pasted authorization code and store the credential."""
+        body: dict[str, Any] = {"flow_id": flow_id, "code": code}
+        if label:
+            body["label"] = label
+        return await self._admin_request(
+            profile_id, "POST", "/v1/auth/oauth/complete", json_body=body
+        )
+
+    async def logout_provider(
+        self, profile_id: UUID, provider: str, credential: str | None = None
+    ) -> dict:
+        """Remove stored credentials for a provider."""
+        params = {"credential": credential} if credential else None
+        return await self._admin_request(
+            profile_id, "DELETE", f"/v1/auth/providers/{provider}", params=params
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()
