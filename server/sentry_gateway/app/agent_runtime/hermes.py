@@ -66,6 +66,90 @@ def normalize_event_type(native: str) -> RuntimeEventType:
     return _EVENT_MAP.get(native, RuntimeEventType.TOOL_PROGRESS)
 
 
+#: Frames that exist to bracket a response and carry no reportable content.
+#: Without this they hit normalize_event_type's TOOL_PROGRESS default and reach
+#: clients as empty tool events.
+_SILENT_EVENTS = frozenset({
+    "response.created",
+    "response.in_progress",
+    "response.output_text.done",
+    "response.content_part.added",
+    "response.content_part.done",
+})
+
+
+def _shorten(value: str, limit: int) -> str:
+    return value if len(value) <= limit else value[: limit - 1] + "\u2026"
+
+
+def _tool_activity(raw: dict) -> tuple[str, dict] | None:
+    """Extract (summary, evidence) from a Responses output-item frame.
+
+    Returns None when the item is not tool activity, so the caller can stay
+    silent rather than report a tool that never ran.
+
+    ``arguments`` arrives as a JSON *string*; it is decoded when possible so a
+    UI can render fields instead of an escaped blob, and passed through as text
+    when it is not valid JSON -- showing the raw value beats showing nothing.
+    """
+    item = raw.get("item")
+    if not isinstance(item, dict):
+        return None
+    kind = str(item.get("type") or "")
+    call_id = str(item.get("call_id") or item.get("id") or "")
+
+    if kind == "function_call":
+        name = str(item.get("name") or "").strip()
+        if not name:
+            return None
+        raw_args = item.get("arguments")
+        args: object = {}
+        if isinstance(raw_args, str) and raw_args.strip():
+            try:
+                args = json.loads(raw_args)
+            except json.JSONDecodeError:
+                args = {"_raw": _shorten(raw_args, 500)}
+        elif isinstance(raw_args, dict):
+            args = raw_args
+        status = str(item.get("status") or "in_progress")
+        # Strip the mcp__<server>__ prefix for the human-facing line only; the
+        # unabbreviated name stays in evidence so logs remain unambiguous.
+        display = name.split("__")[-1] if name.startswith("mcp__") else name
+        evidence = {
+            "tool": name,
+            "display_name": display,
+            "args": args if isinstance(args, dict) else {"value": args},
+            "status": status,
+        }
+        if call_id:
+            evidence["tool_call_id"] = call_id
+        return (f"{display}({_shorten(json.dumps(evidence['args']), 160)})", evidence)
+
+    if kind == "function_call_output":
+        text = ""
+        output = item.get("output")
+        if isinstance(output, list):
+            parts = [
+                str(part.get("text") or "")
+                for part in output
+                if isinstance(part, dict) and part.get("text")
+            ]
+            text = "\n".join(parts)
+        elif isinstance(output, str):
+            text = output
+        evidence = {
+            "status": "completed",
+            # Bounded: a tool result can be megabytes, and this rides an SSE
+            # frame to every connected browser.
+            "result": _shorten(text, 2000),
+        }
+        if call_id:
+            evidence["tool_call_id"] = call_id
+        return (_shorten(text.strip().replace("\n", " "), 200) or "tool result", evidence)
+
+    return None
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -361,8 +445,37 @@ class HermesRuntime(AgentRuntime):
                 evidence={"raw": data[:500]},
             )
 
+        native = str(raw.get("type", ""))
+
+        # Hermes reports tool activity as OpenAI Responses output items, not as
+        # hermes.tool.* events. Before this was handled, they fell through
+        # normalize_event_type's TOOL_PROGRESS default and arrived as
+        # content-free "tool progress" -- a real turn produced EIGHT events with
+        # empty summary and empty evidence, which is noise shaped like signal.
+        # The detail was always in the frame; nothing was reading it.
+        if native in ("response.output_item.added", "response.output_item.done"):
+            detail = _tool_activity(raw)
+            if detail is None:
+                # A non-tool item (an assistant message, say). Emitting
+                # TOOL_PROGRESS for it would report a tool that never ran.
+                return None
+            summary, evidence = detail
+            return RuntimeEvent(
+                type=RuntimeEventType.TOOL_PROGRESS,
+                session_id=request.session_id,
+                correlation_id=request.correlation_id,
+                occurred_at=_now(),
+                summary=summary,
+                evidence=evidence,
+            )
+
+        # Lifecycle frames carry no content of their own. Letting them take the
+        # TOOL_PROGRESS default put blank events on the wire for every consumer.
+        if native in _SILENT_EVENTS:
+            return None
+
         return RuntimeEvent(
-            type=normalize_event_type(str(raw.get("type", ""))),
+            type=normalize_event_type(native),
             session_id=request.session_id,
             correlation_id=request.correlation_id,
             occurred_at=_now(),
