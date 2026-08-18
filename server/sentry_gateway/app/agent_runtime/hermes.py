@@ -128,6 +128,36 @@ class HermesRuntime(AgentRuntime):
                 f"No Hermes instance is registered for profile {profile_id}."
             ) from exc
 
+    async def available_models(self, profile_id: UUID) -> tuple[str, ...]:
+        """Model aliases this profile's Hermes advertises on /v1/models.
+
+        Hermes lists ``hermes-agent`` plus every alias in its api_server
+        ``model_routes``, so this is the live integration registry rather than a
+        catalogue we maintain separately: wire a provider as a route and it
+        appears here, and in the picker, with no code change.
+
+        A failure RAISES rather than returning (). An empty tuple means "this
+        profile can reach nothing", which callers are entitled to trust; turning
+        an unreachable Hermes into that same answer would let a transport blip
+        read as a deliberate configuration.
+        """
+        instance = self._instance(profile_id)
+        response = await self._client.get(
+            instance.url("/v1/models"), headers=instance.auth_header
+        )
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            return ()
+        models: list[str] = []
+        for entry in data:
+            if isinstance(entry, dict):
+                model_id = entry.get("id")
+                if isinstance(model_id, str) and model_id.strip():
+                    models.append(model_id.strip())
+        return tuple(models)
+
     async def capabilities(self, profile_id: UUID) -> RuntimeCapabilities:
         try:
             instance = self._instance(profile_id)
@@ -255,8 +285,14 @@ class HermesRuntime(AgentRuntime):
                 f"{request.prompt}"
             )
 
+        # `model` addresses the Hermes api_server: an alias configured in that
+        # profile's model_routes is routed to that alias' provider/model, and
+        # anything else falls through to the profile's own configured default.
+        # profile_name is that fall-through -- it matches no route by design.
+        # The route has already refused any model this profile does not
+        # advertise, so an unroutable value cannot reach here.
         payload = {
-            "model": instance.profile_name,
+            "model": request.model or instance.profile_name,
             "input": content,
             "stream": True,
             "metadata": {"sentry_correlation_id": request.correlation_id},

@@ -90,3 +90,35 @@ gateway:
 mcp_servers:
   server-control:
     url: http://server-control-mcp:8765/mcp
+
+# ---------------------------------------------------------------------------
+# Reachable models — the model picker's source of truth.
+#
+# Hermes' api_server advertises `hermes-agent` PLUS every alias below on
+# GET /v1/models, and routes an incoming `model` field matching an alias to that
+# alias' provider/model. The Sentry Gateway proxies that list to the WebUI and
+# REFUSES any model not on it, so this table is the integration registry: a
+# provider with no route cannot be selected, and adding a route publishes it
+# everywhere at once. Never list a model this deployment cannot actually reach.
+#
+# NOTE: this file is a build-time SEED. Hermes reads $HERMES_HOME, i.e. the
+# ./data/hermes/<slug>/ bind mount, so editing here changes only profiles
+# provisioned AFTER the change. To alter a running profile, edit its live
+# config and restart hermes. See docs/local-inference.md.
+platforms:
+  api_server:
+    extra:
+      model_routes:
+        # Local CPU inference on this box. Free, private, ~25 tok/s.
+        # Requires the `llama` service: docker compose --profile local-model up -d llama
+        qwen3.6-35b-local:
+          model: /models/Qwen3.6-35B-A3B-MTP-UD-Q4_K_M.gguf
+          provider: custom
+          base_url: http://llama:8080/v1
+          api_key: local
+        # Hosted. Deliberately NO api_key: leaving it unset resolves the
+        # credential through the provider chain (OPENAI_API_KEY in the
+        # environment) rather than duplicating a secret into this file.
+        gpt-5.4:
+          model: gpt-5.4
+          provider: openai-api

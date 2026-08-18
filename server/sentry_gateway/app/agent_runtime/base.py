@@ -90,6 +90,13 @@ class RuntimeTurn:
     #: Untrusted connector/document content is passed as quoted data. It must never
     #: be able to select tools, workspaces, or approval modes.
     quoted_context: tuple[str, ...] = ()
+    #: Which advertised model answers this turn. None keeps the profile's own
+    #: configured default, which is the behaviour every caller had before model
+    #: selection existed. A non-None value has ALREADY been validated against
+    #: available_models() by the route -- the runtime does not re-check, and an
+    #: unvalidated value must never reach here (it would silently answer from
+    #: the default while the UI claimed otherwise).
+    model: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +157,11 @@ class AgentRuntime(Protocol):
     async def create_session(
         self, profile_id: UUID, scope: SessionScope
     ) -> RuntimeSession: ...
+
+    #: Model aliases this profile's runtime can actually route to. This is the
+    #: integration registry: anything absent here cannot be selected, so an
+    #: empty result means "no options", never "fall back to a default list".
+    async def available_models(self, profile_id: UUID) -> tuple[str, ...]: ...
 
     def send_turn(self, request: RuntimeTurn) -> AsyncIterator[RuntimeEvent]: ...
 

@@ -31,6 +31,63 @@ class ChatTurnRequest(BaseModel):
     session_id: str | None = None
     #: Untrusted connector/document text, passed to the runtime as quoted data.
     quoted_context: list[str] = Field(default_factory=list)
+    #: Which advertised model should answer. Absent keeps the profile's own
+    #: configured default. A value that this profile does not advertise is
+    #: REFUSED (400) rather than quietly downgraded -- see _validated_model.
+    model: str | None = None
+
+
+async def _validated_model(runtime, profile_id, model: str | None) -> str | None:
+    """Return *model* if this profile can actually route to it, else refuse.
+
+    Falling back to the default on an unknown model is the specific bug this
+    endpoint exists to prevent: the client would show one model while another
+    answered. That failure is silent and survives inspection, so an unknown
+    model has to be a loud 400.
+
+    An unreadable registry is also refused. Treating "we could not ask" as
+    "anything is fine" would reintroduce exactly the same silent mis-routing
+    through a different door.
+    """
+    if model is None:
+        return None
+    try:
+        advertised = await runtime.available_models(profile_id)
+    except UnknownProfileError:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not read the available models for this profile.",
+        ) from exc
+    if model not in tuple(advertised):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Model {model!r} is not available to this profile. "
+                "Only models this deployment can actually reach may be selected."
+            ),
+        )
+    return model
+
+
+@router.get("/models")
+async def list_models(request: Request, caller: Caller = Depends(require_caller)) -> dict:
+    """Model aliases this caller's own profile can actually route to.
+
+    This is the picker's only source. It deliberately has no fallback list: if a
+    profile advertises nothing, the answer is an empty list, because showing a
+    catalogue of models that cannot answer is the defect this replaced.
+    """
+    runtime = request.app.state.runtime
+    try:
+        models = await runtime.available_models(caller.profile_id)
+    except UnknownProfileError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No agent runtime is provisioned for this profile.",
+        )
+    return {"models": list(models)}
 
 
 def _sse(event: RuntimeEvent) -> str:
@@ -102,6 +159,10 @@ async def chat_turn(
 
     session_id = body.session_id or session.session_id
 
+    # Validate the model BEFORE the audit write: a turn that will be refused
+    # should not leave an audit row claiming it ran.
+    chosen_model = await _validated_model(runtime, caller.profile_id, body.model)
+
     audit = _audit_service(request)
     if audit is None:
         # No database means no audit trail. Token verification needs no DB, so
@@ -142,6 +203,7 @@ async def chat_turn(
         prompt=body.prompt,
         correlation_id=correlation_id,
         quoted_context=tuple(body.quoted_context),
+        model=chosen_model,
     )
 
     async def stream():
