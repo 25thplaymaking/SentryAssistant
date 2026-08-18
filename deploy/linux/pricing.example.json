@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "Per-million-token prices, supplied by YOU. Copy to pricing.json and fill in.",
+    "Deliberately shipped as zeros rather than as real numbers: prices change,",
+    "a stale table reports wrong spend with total confidence, and a confidently",
+    "wrong money figure is worse than no figure. The importer stores TOKEN",
+    "COUNTS only; cost is computed at read time against this file.",
+    "",
+    "Cache reads and cache writes are priced differently from fresh input on",
+    "most providers, which is why imported_sessions keeps them in separate",
+    "columns. Folding them together would flatter a heavily-cached session."
+  ],
+  "models": {
+    "claude-opus-5": {
+      "input_per_mtok": 0.0,
+      "output_per_mtok": 0.0,
+      "cache_read_per_mtok": 0.0,
+      "cache_write_per_mtok": 0.0
+    },
+    "gpt-5.4": {
+      "input_per_mtok": 0.0,
+      "output_per_mtok": 0.0,
+      "cache_read_per_mtok": 0.0,
+      "cache_write_per_mtok": 0.0
+    },
+    "/models/Qwen3.6-35B-A3B-MTP-UD-Q4_K_M.gguf": {
+      "_comment": "Local inference. Electricity aside, marginal token cost is zero.",
+      "input_per_mtok": 0.0,
+      "output_per_mtok": 0.0,
+      "cache_read_per_mtok": 0.0,
+      "cache_write_per_mtok": 0.0
+    }
+  }
+}
