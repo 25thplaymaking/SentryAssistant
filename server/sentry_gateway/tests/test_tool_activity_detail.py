@@ -125,3 +125,49 @@ class TestNothingRegressed:
         rt = HermesRuntime.__new__(HermesRuntime)
         ev = rt._parse_sse_line("data: {not json", turn())
         assert ev.type is RuntimeEventType.ERROR
+
+
+class TestTurnUsageIsCarried:
+    """Token accounting arrives on response.completed and was being dropped.
+
+    Verbatim from a real turn: the frame carries model and a usage block, but
+    the adapter read only `delta`/`summary`/`evidence`, so every completed turn
+    reached the Gateway with no numbers at all. That is why nothing could track
+    tokens or cost.
+    """
+
+    COMPLETED = {
+        "type": "response.completed",
+        "response": {
+            "id": "resp_54f", "object": "response", "status": "completed",
+            "model": "qwen3.6-35b-local",
+            "usage": {"input_tokens": 28470, "output_tokens": 60, "total_tokens": 28530},
+            "output": [],
+        },
+    }
+
+    def test_completion_still_maps_to_turn_completed(self):
+        assert parse(self.COMPLETED).type is RuntimeEventType.TURN_COMPLETED
+
+    def test_token_counts_are_carried(self):
+        ev = parse(self.COMPLETED)
+        assert ev.evidence.get("input_tokens") == 28470
+        assert ev.evidence.get("output_tokens") == 60
+        assert ev.evidence.get("total_tokens") == 28530
+
+    def test_the_model_that_answered_is_carried(self):
+        """Without this every turn lands in an 'unknown' bucket."""
+        assert parse(self.COMPLETED).evidence.get("model") == "qwen3.6-35b-local"
+
+    def test_a_completion_without_usage_does_not_invent_numbers(self):
+        ev = parse({"type": "response.completed", "response": {"model": "m"}})
+        assert ev.type is RuntimeEventType.TURN_COMPLETED
+        assert "input_tokens" not in ev.evidence
+
+    def test_non_integer_usage_is_ignored_rather_than_coerced(self):
+        ev = parse({
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": "many", "output_tokens": 5}},
+        })
+        assert "input_tokens" not in ev.evidence
+        assert ev.evidence.get("output_tokens") == 5

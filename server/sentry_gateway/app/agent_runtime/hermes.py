@@ -82,6 +82,32 @@ def _shorten(value: str, limit: int) -> str:
     return value if len(value) <= limit else value[: limit - 1] + "\u2026"
 
 
+def _completion_evidence(raw: dict) -> dict:
+    """Model and token counts from a response.completed frame.
+
+    Absent or non-integer values are OMITTED rather than defaulted to 0. A
+    usage record is the basis for cost accounting, and a fabricated zero is
+    indistinguishable from a genuinely free turn -- silently understating spend
+    is worse than reporting nothing for that turn.
+    """
+    response = raw.get("response")
+    if not isinstance(response, dict):
+        return {}
+    evidence: dict = {}
+    model = response.get("model")
+    if isinstance(model, str) and model.strip():
+        evidence["model"] = model.strip()
+    usage = response.get("usage")
+    if isinstance(usage, dict):
+        for key in ("input_tokens", "output_tokens", "total_tokens",
+                    "cached_tokens", "reasoning_tokens"):
+            value = usage.get(key)
+            # bool is an int subclass; True would silently become 1 token.
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                evidence[key] = value
+    return evidence
+
+
 def _tool_activity(raw: dict) -> tuple[str, dict] | None:
     """Extract (summary, evidence) from a Responses output-item frame.
 
@@ -473,6 +499,23 @@ class HermesRuntime(AgentRuntime):
         # TOOL_PROGRESS default put blank events on the wire for every consumer.
         if native in _SILENT_EVENTS:
             return None
+
+        # Token accounting rides on the completion frame and was being dropped:
+        # the generic path below reads only delta/summary/evidence, so every
+        # finished turn reached the Gateway with no numbers and no model. That
+        # is why usage could not be tracked and why turns bucketed as "unknown".
+        if native == "response.completed":
+            return RuntimeEvent(
+                type=RuntimeEventType.TURN_COMPLETED,
+                session_id=request.session_id,
+                correlation_id=request.correlation_id,
+                occurred_at=_now(),
+                # Preserved, not blanked: the completion summary is the only
+                # speakable event (SPEAKABLE_EVENTS), so dropping it silences
+                # voice output for the turn.
+                summary=str(raw.get("delta") or raw.get("summary") or "")[:2000],
+                evidence=_completion_evidence(raw),
+            )
 
         return RuntimeEvent(
             type=normalize_event_type(native),

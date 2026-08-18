@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from ..agent_runtime.base import RuntimeEvent, RuntimeTurn, SessionScope
 from ..agent_runtime.endpoints import refresh_profile_endpoint
 from ..agent_runtime.hermes import UnknownProfileError
+from ..actions.recorder import ActionRecorder
 from ..audit.service import AuditEvent, AuditService, Decision
 from .deps import Caller, require_caller
 
@@ -69,6 +70,84 @@ async def _validated_model(runtime, profile_id, model: str | None) -> str | None
             ),
         )
     return model
+
+
+@router.get("/actions")
+async def list_actions(
+    request: Request,
+    limit: int = 100,
+    session_id: str | None = None,
+    caller: Caller = Depends(require_caller),
+) -> dict:
+    """What this caller's own agent has been doing, newest first.
+
+    Scoped to the caller's profile with no override: one person's action log is
+    not another's, and an operator-wide view would need its own admin route
+    rather than a query parameter anyone could pass.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Action log storage is unavailable.",
+        )
+    limit = max(1, min(int(limit), 500))
+    sql = (
+        "SELECT occurred_at, kind, model, tool_name, tool_args, result_preview,"
+        " status, input_tokens, output_tokens, total_tokens, session_id"
+        " FROM agent_actions WHERE profile_id = $1"
+    )
+    args: list = [caller.profile_id]
+    if session_id:
+        sql += " AND session_id = $2"
+        args.append(session_id)
+    sql += f" ORDER BY occurred_at DESC LIMIT {limit}"
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(sql, *args)
+    return {"actions": [dict(r) for r in rows]}
+
+
+@router.get("/usage")
+async def usage_summary(
+    request: Request, days: int = 30, caller: Caller = Depends(require_caller)
+) -> dict:
+    """Per-model token totals for this caller over the last *days*.
+
+    Turns whose model was never reported group under a NULL model rather than a
+    literal "unknown", so a gap in instrumentation stays visibly a gap instead
+    of masquerading as a model.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Action log storage is unavailable.",
+        )
+    days = max(1, min(int(days), 365))
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT model, count(*) AS turns,"
+            " coalesce(sum(input_tokens),0) AS input_tokens,"
+            " coalesce(sum(output_tokens),0) AS output_tokens,"
+            " coalesce(sum(total_tokens),0) AS total_tokens"
+            " FROM agent_actions"
+            " WHERE profile_id = $1 AND kind = 'turn'"
+            f" AND occurred_at > now() - interval '{days} days'"
+            " GROUP BY model ORDER BY total_tokens DESC",
+            caller.profile_id,
+        )
+        tools = await conn.fetch(
+            "SELECT tool_name, count(*) AS calls FROM agent_actions"
+            " WHERE profile_id = $1 AND kind = 'tool' AND tool_name IS NOT NULL"
+            f" AND occurred_at > now() - interval '{days} days'"
+            " GROUP BY tool_name ORDER BY calls DESC LIMIT 20",
+            caller.profile_id,
+        )
+    return {
+        "days": days,
+        "by_model": [dict(r) for r in rows],
+        "by_tool": [dict(r) for r in tools],
+    }
 
 
 @router.get("/models")
@@ -206,8 +285,15 @@ async def chat_turn(
         model=chosen_model,
     )
 
+    # Recording lives here, not in the runtime adapter: this is where the pool
+    # and the audit write already are, which keeps the adapter a pure
+    # translation layer. It never raises -- telemetry that can truncate a live
+    # answer is worse than no telemetry.
+    recorder = ActionRecorder(getattr(request.app.state, "pool", None), caller.profile_id)
+
     async def stream():
         async for event in runtime.send_turn(turn):
+            await recorder.record(event)
             yield _sse(event)
         yield "data: [DONE]\n\n"
 
