@@ -81,6 +81,15 @@ cd /srv/sentry/repo  && git pull --ff-only && git push github 25vid/sentry-found
 cd deploy/linux && docker compose build gateway webui && docker compose up -d gateway webui
 ```
 
+**Unattended operation (enabled 2026-08-21):** `sentry-update.service` runs at
+boot — it fetches the **`github`** remote explicitly (workstation-independent:
+push to GitHub and reboot/restart the unit to roll grain forward; ff-only,
+never touches a dirty checkout, and the stack comes up even if the fetch
+fails). `sentry-import.timer` imports agent-session metadata daily. Both were
+installed on 2026-08-18 but left disabled until today; both are verified live
+(a forced update run completed clean, and the import recorded
+"imported 1, unchanged 3, failed 0").
+
 New SQL migrations are applied out-of-band (all are idempotent):
 `docker exec -i sentry-postgres-1 psql -U $POSTGRES_USER -d $POSTGRES_DB < server/sentry_gateway/migrations/NNN_*.sql`
 (010–013 are applied.)
