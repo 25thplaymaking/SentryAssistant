@@ -103,7 +103,8 @@ class TestRefusesRatherThanGuessing:
 
 class TestProviderTable:
     def test_only_subscription_providers_are_offered(self):
-        assert set(attach.SUBSCRIPTION_PROVIDERS) == {"anthropic", "openai-codex"}
+        # openai-codex left the table when the default flipped to Nous Portal.
+        assert set(attach.SUBSCRIPTION_PROVIDERS) == {"anthropic", "nous"}
 
     def test_each_has_a_default_alias_and_label(self):
         for meta in attach.SUBSCRIPTION_PROVIDERS.values():
@@ -172,5 +173,5 @@ class TestEnvTokenDetection:
         assert "token_present" in src and "token_absent" in src
         assert "token_present" not in "token_absent"
 
-    def test_codex_has_no_env_token_and_must_use_oauth(self):
-        assert "env_token" not in attach.SUBSCRIPTION_PROVIDERS["openai-codex"]
+    def test_nous_has_no_env_token_and_must_use_oauth(self):
+        assert "env_token" not in attach.SUBSCRIPTION_PROVIDERS["nous"]
