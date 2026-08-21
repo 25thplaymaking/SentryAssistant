@@ -6,6 +6,7 @@ rather than stubbed.
 """
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI
@@ -14,6 +15,7 @@ from fastapi.testclient import TestClient
 from app.agent_runtime.base import RuntimeEvent, RuntimeEventType, RuntimeSession
 from app.agent_runtime.hermes import UnknownProfileError
 from app.auth.tokens import Audience, TokenService
+from app.cron.scheduler import CronScheduler
 from app.routes import cron as cron_routes
 
 KEY = "cron-crud-test-signing-key-padded-well-past-the-32-byte-minimum"
@@ -136,6 +138,19 @@ class TestUpdate:
         assert body["name"] == "brief"          # untouched
         assert body["prompt"] == "morning brief"  # untouched
 
+    def test_update_rejects_an_unparseable_schedule(self):
+        # PUT must not smuggle in what POST refuses: an unparseable schedule
+        # is skipped by the scheduler and would silently never fire again.
+        job = _job()
+        pool = FakePool([job])
+        resp = build(pool).put(
+            f"/api/cron/{job['id']}", json={"schedule": "61 * * * *"},
+            headers=bearer(PROFILE_A),
+        )
+        assert resp.status_code == 422
+        assert "Invalid schedule" in resp.json()["detail"]
+        assert pool.jobs[job["id"]]["schedule"] == "0 8 * * *"  # untouched
+
     def test_bounds_match_create(self):
         job = _job()
         client = build(FakePool([job]))
@@ -214,6 +229,49 @@ class TestRunNow:
         assert resp.status_code == 200
         assert resp.json()["status"] == "failed"
         assert "runtime" in resp.json()["summary"]
+
+    def test_a_job_already_running_is_409_until_released(self):
+        # The route shares the scheduler's per-job guard, so a manual fire
+        # cannot stack on a scheduled fire (or on another manual one).
+        job = _job()
+        client = build(FakePool([job]), FakeRuntime())
+        scheduler = CronScheduler(
+            SimpleNamespace(state=SimpleNamespace(pool=None, runtime=None))
+        )
+        client.app.state.cron_scheduler = scheduler
+        assert scheduler.try_begin(job["id"])  # a fire is already in flight
+
+        resp = client.post(f"/api/cron/{job['id']}/run", headers=bearer(PROFILE_A))
+        assert resp.status_code == 409
+        assert resp.json() == {"detail": "already running"}
+
+        scheduler.end(job["id"])  # the in-flight fire finishes
+        resp = client.post(f"/api/cron/{job['id']}/run", headers=bearer(PROFILE_A))
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    def test_the_guard_is_released_after_a_manual_run(self):
+        # A completed manual run must not leave the job wedged "running".
+        job = _job()
+        client = build(FakePool([job]), FakeRuntime())
+        scheduler = CronScheduler(
+            SimpleNamespace(state=SimpleNamespace(pool=None, runtime=None))
+        )
+        client.app.state.cron_scheduler = scheduler
+        first = client.post(f"/api/cron/{job['id']}/run", headers=bearer(PROFILE_A))
+        second = client.post(f"/api/cron/{job['id']}/run", headers=bearer(PROFILE_A))
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert scheduler.try_begin(job["id"])  # nothing left holding the guard
+
+    def test_without_a_scheduler_the_run_is_unguarded_not_refused(self):
+        # An app booted without the scheduler has no scheduled fires to
+        # collide with; a manual fire must still work.
+        job = _job()
+        client = build(FakePool([job]), FakeRuntime())  # no cron_scheduler
+        resp = client.post(f"/api/cron/{job['id']}/run", headers=bearer(PROFILE_A))
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
 
 
 def test_unauthenticated_is_refused():

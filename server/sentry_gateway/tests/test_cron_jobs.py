@@ -86,5 +86,20 @@ def test_create_returns_job():
     assert resp.json()["name"] == "nightly"
 
 
+def test_create_rejects_an_unparseable_schedule():
+    """The scheduler deliberately skips unparseable rows, so a schedule that
+    got past POST would sit enabled and silently never fire."""
+    pool = FakePool()
+    resp = build(pool).post(
+        "/api/cron",
+        json={"name": "broken", "schedule": "every day at 8", "prompt": "x"},
+        headers=bearer(PROFILE_A),
+    )
+    assert resp.status_code == 422
+    assert "Invalid schedule" in resp.json()["detail"]
+    assert "5 cron fields" in resp.json()["detail"]  # the parser's own message
+    assert pool.calls == []  # refused before the database, nothing stored
+
+
 def test_unauthenticated_is_refused():
     assert build(FakePool()).get("/api/cron").status_code == 401

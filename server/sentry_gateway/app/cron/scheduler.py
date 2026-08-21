@@ -12,10 +12,29 @@ the host clock is UTC, so an unset zone silently shifts every job by the
 offset. Set it in deploy/linux/.env.
 
 Double-fire protection is layered because each layer covers a different hole:
-  - in-memory last-fired minute: the 30s poll sees each minute twice;
-  - the last_run_at claim UPDATE: a restart (or second Gateway) mid-minute
-    loses the claim race instead of firing again;
-  - the in-memory running set: a job still executing is skipped, not stacked.
+  - in-memory last-fired minute: the 30s poll sees each minute twice. Kept as
+    a UTC instant, not local wall time: during the fall-back repeated hour the
+    two local 1:30s compare EQUAL under PEP 495 (fold is ignored when both
+    operands share a zone), so a wall-time guard would swallow the second one;
+  - the claimed_minute claim UPDATE (migration 014): a restart (or second
+    Gateway) mid-minute loses the claim race instead of firing again. This is
+    deliberately NOT last_run_at — that column is the user-facing "last run",
+    written at completion by manual and scheduled fires alike, and a manual
+    fire that stamped the claim column would silently eat the next scheduled
+    minute;
+  - the running-job guard (try_begin/end): a job still executing is skipped,
+    not stacked. POST /{id}/run shares this guard, so a manual fire cannot
+    overlap a scheduled one (or another manual one).
+
+Known divergences from Vixie cron, documented rather than fixed:
+  - Spring-forward: a job scheduled inside the skipped local hour (02:00-02:59
+    on the DST-start day in most US zones) simply does not fire that day. The
+    loop only matches minutes that exist on the wall clock; there is no
+    Vixie-style catch-up run after the jump.
+  - Stepped-star day fields: '*/2' in day-of-month counts as "restricted" for
+    the dom/dow OR rule here, so '0 0 */2 * 1' fires on odd days OR Mondays.
+    Vixie treats any field with a leading '*' as unrestricted, which would
+    make the same schedule fire only on Mondays that fall on odd days.
 """
 
 from __future__ import annotations
@@ -39,6 +58,13 @@ SUMMARY_LIMIT = 500
 
 #: How often the loop wakes. Half a minute, so no matched minute is missed.
 TICK_SECONDS = 30.0
+
+#: Upper bound on one tick. A wedged pool (acquire or a query that never
+#: returns) would otherwise freeze the loop forever with no log line — the
+#: exact silent-death failure the loop's catch-all exists to prevent. Two
+#: minutes is far beyond any healthy tick and short enough that the loop
+#: resumes matching within a few missed minutes.
+TICK_TIMEOUT_SECONDS = 120.0
 
 _FIELD_BOUNDS = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))
 
@@ -221,10 +247,17 @@ async def run_job(
                 status = "ok"
                 summary = (reply.strip() or event.summary)[:SUMMARY_LIMIT]
             elif event.type in (RuntimeEventType.TURN_FAILED, RuntimeEventType.ERROR):
-                status = "failed"
-                summary = (event.summary or event.type.value)[:SUMMARY_LIMIT]
+                # Completion is terminal. The Hermes adapter synthesizes ERROR
+                # for any malformed trailing SSE line, so a stream that already
+                # completed must not be flipped to failed by its own tail.
+                if status != "ok":
+                    status = "failed"
+                    summary = (event.summary or event.type.value)[:SUMMARY_LIMIT]
     except Exception as exc:
-        status, summary = "failed", f"{type(exc).__name__}: {exc}"[:SUMMARY_LIMIT]
+        # Same terminality rule: a stream that raises after the completion
+        # frame already delivered the turn; keep the ok and its reply.
+        if status != "ok":
+            status, summary = "failed", f"{type(exc).__name__}: {exc}"[:SUMMARY_LIMIT]
     return await _finish(pool, job_id, status, summary)
 
 
@@ -237,14 +270,41 @@ class CronScheduler:
     loop: each fire runs in its own task and records its own outcome.
     """
 
-    def __init__(self, app, zone: ZoneInfo | None = None, interval: float = TICK_SECONDS):
+    def __init__(
+        self,
+        app,
+        zone: ZoneInfo | None = None,
+        interval: float = TICK_SECONDS,
+        tick_timeout: float = TICK_TIMEOUT_SECONDS,
+    ):
         self._app = app
         self._zone = zone or timezone.utc
         self._interval = interval
+        self._tick_timeout = tick_timeout
         self._loop_task: asyncio.Task | None = None
         self._tasks: set[asyncio.Task] = set()
         self._running: set[UUID] = set()
+        #: Keyed by job, valued by the UTC instant of the last fired minute.
+        #: UTC, not local wall time: PEP 495 makes the fall-back hour's two
+        #: local 1:30s compare equal, and a wall-time guard would skip the
+        #: second one.
         self._last_fired: dict[UUID, datetime] = {}
+
+    def try_begin(self, job_id: UUID) -> bool:
+        """Claim the right to run a job now; False means it is already running.
+
+        This is the single in-process overlap guard: the scheduler's own fires
+        and POST /{id}/run both pass through it, so a manual fire can never
+        stack on a scheduled one (or on another manual one). Every successful
+        try_begin must be paired with end() in a finally.
+        """
+        if job_id in self._running:
+            return False
+        self._running.add(job_id)
+        return True
+
+    def end(self, job_id: UUID) -> None:
+        self._running.discard(job_id)
 
     def start(self) -> None:
         self._loop_task = asyncio.get_running_loop().create_task(self._loop())
@@ -265,9 +325,23 @@ class CronScheduler:
     async def _loop(self) -> None:
         while True:
             try:
-                await self.tick()
+                # Bounded: a wedged pool inside the tick (acquire or a query
+                # that never returns) would otherwise freeze this loop forever
+                # and silently — no exception, no log line, no fires. The
+                # timeout cancels the hung tick so the next iteration gets a
+                # fresh try. asyncio.timeout, NOT wait_for: on 3.11 wait_for
+                # swallows a cancellation that lands while the inner future is
+                # already done, which turned stop() into a permanent hang
+                # whenever ticks were failing fast.
+                async with asyncio.timeout(self._tick_timeout):
+                    await self.tick()
             except asyncio.CancelledError:
                 raise
+            except TimeoutError:
+                logger.warning(
+                    "cron tick exceeded %.0fs and was abandoned; "
+                    "the database may be wedged", self._tick_timeout,
+                )
             except Exception:
                 # The loop outlives any bad tick; a dead scheduler fires nothing
                 # and looks exactly like the bug this module replaces.
@@ -284,6 +358,10 @@ class CronScheduler:
         if now is None:
             now = datetime.now(self._zone)
         minute = now.astimezone(self._zone).replace(second=0, microsecond=0)
+        # Guards compare this instant, never the local wall time: astimezone
+        # honours fold, so the fall-back hour's repeated 1:30 becomes two
+        # distinct UTC minutes instead of one that fires once.
+        minute_utc = minute.astimezone(timezone.utc)
 
         async with pool.acquire() as conn:
             rows = await conn.fetch(
@@ -301,22 +379,29 @@ class CronScheduler:
                 continue
             if not schedule.matches(minute):
                 continue
-            if job_id in self._running or self._last_fired.get(job_id) == minute:
+            if job_id in self._running or self._last_fired.get(job_id) == minute_utc:
                 continue
             # Claim the minute in the database so a restart (or a second
             # Gateway) mid-minute loses the race instead of double-firing.
+            # The claim column is claimed_minute (migration 014), NOT
+            # last_run_at: last_run_at is the user-facing outcome stamp that
+            # manual runs also write, and claiming through it let a manual
+            # fire silently eat the next scheduled minute.
             async with pool.acquire() as conn:
                 claimed = await conn.fetchval(
-                    "UPDATE profile_cron_jobs SET last_run_at = now()"
+                    "UPDATE profile_cron_jobs SET claimed_minute = now()"
                     " WHERE id = $1 AND enabled"
-                    " AND (last_run_at IS NULL OR last_run_at < $2)"
+                    " AND (claimed_minute IS NULL OR claimed_minute < $2)"
                     " RETURNING id",
-                    job_id, minute,
+                    job_id, minute_utc,
                 )
-            self._last_fired[job_id] = minute
+            self._last_fired[job_id] = minute_utc
             if claimed is None:
                 continue
-            self._running.add(job_id)
+            if not self.try_begin(job_id):
+                # A manual run began during the claim round-trip; skip, don't
+                # stack — same rule as a still-running scheduled fire.
+                continue
             task = asyncio.get_running_loop().create_task(
                 self._fire(pool, runtime, row)
             )
@@ -337,4 +422,4 @@ class CronScheduler:
             # of last resort so one job can never take the set down.
             logger.warning("cron job %s crashed", job_id, exc_info=True)
         finally:
-            self._running.discard(job_id)
+            self.end(job_id)
