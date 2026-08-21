@@ -4,29 +4,65 @@
 # environment from deploy/linux/.env, which is not in Git.
 #
 # Isolation note: this Hermes runs as a non-root user inside its own container
-# with no Docker socket and no published port. That container IS the whole-process
+# with no Docker socket. Its agent API is internal-only; only the raw Nous proxy
+# is published on host loopback for Tardia. That container IS the whole-process
 # boundary the security policy requires. `terminal.backend: docker` is
 # deliberately NOT set here: enabling it would require mounting the host Docker
 # socket into Hermes, which grants effective host root and would break the very
 # boundary it is meant to provide.
 
 model:
-  # Pin the active inference provider explicitly. This outranks environment
-  # autodetection in Hermes' resolve_provider() priority chain, so the keys
-  # present in .env do not decide which provider runs — this line does.
-  #
-  # The registry name is "openai-api" (native OpenAI). It is NOT "openai".
-  # Leaving this unset while OPENAI_API_KEY is exported would resolve to
-  # "openrouter" and send requests to the wrong endpoint.
-  #
-  # To switch providers: change this value, then
-  #   docker compose restart hermes
-  # Valid names include: openai-api, anthropic, gemini, xai, deepseek, nous.
-  provider: openai-api
-  # Mid-tier: meaningfully cheaper per token than the flagship, so the daily
-  # data-sharing allotment stretches further on unattended cron turns.
-  # Raise to gpt-5.5 if reasoning quality proves insufficient.
-  model: gpt-5.4
+  # Pin Nous explicitly. OAuth lives in Hermes's auth store and is refreshed by
+  # Hermes; environment-key autodetection is not part of this deployment.
+  provider: nous
+  # Stable, tool-capable, 1.3M-context model selected from the live Nous
+  # catalogue on 2026-08-21. At the Plus-plan rate it is approximately
+  # $0.06/M prompt and $0.14/M completion tokens. The dated slug prevents a
+  # silent model change from altering production behavior.
+  default: deepseek/deepseek-v4-flash-0731
+  context_length: 131072
+
+# One operational agent at a time. Tardia's raw proxy calls do not consume an
+# agent slot, so ordinary Discord replies remain responsive while this blocks
+# overlapping 50+ turn jobs from multiplying spend.
+max_concurrent_sessions: 1
+
+agent:
+  max_turns: 16
+  gateway_timeout: 300
+  reasoning_effort: low
+
+delegation:
+  provider: nous
+  model: deepseek/deepseek-v4-flash-0731
+  max_iterations: 12
+  max_concurrent_children: 1
+  max_spawn_depth: 1
+  orchestrator_enabled: true
+  child_timeout_seconds: 300
+  max_summary_chars: 12000
+
+auxiliary:
+  transient_retries: 1
+  compression:
+    provider: nous
+    model: deepseek/deepseek-v4-flash-0731
+    reasoning_effort: low
+  background_review:
+    provider: nous
+    model: deepseek/deepseek-v4-flash-0731
+    reasoning_effort: low
+  vision:
+    provider: nous
+    model: google/gemini-3.7-flash
+    reasoning_effort: low
+
+# One image backend and one bill: Hermes routes this through the paid Nous Tool
+# Gateway. FLUX Klein is the cheap, fast production default.
+image_gen:
+  provider: fal
+  model: fal-ai/flux-2/klein/9b
+  use_gateway: true
 
 memory:
   # Durable memories are proposed, then shown to the profile's owner before they
@@ -109,16 +145,10 @@ platforms:
   api_server:
     extra:
       model_routes:
-        # Local CPU inference on this box. Free, private, ~25 tok/s.
-        # Requires the `llama` service: docker compose --profile local-model up -d llama
-        qwen3.6-35b-local:
-          model: /models/Qwen3.6-35B-A3B-MTP-UD-Q4_K_M.gguf
-          provider: custom
-          base_url: http://llama:8080/v1
-          api_key: local
-        # Hosted. Deliberately NO api_key: leaving it unset resolves the
-        # credential through the provider chain (OPENAI_API_KEY in the
-        # environment) rather than duplicating a secret into this file.
-        gpt-5.4:
-          model: gpt-5.4
-          provider: openai-api
+        # Hosted through the paid Nous Portal subscription. The OAuth refresh
+        # token is held in auth.json; no provider secret belongs in this file.
+        deepseek-v4-flash:
+          model: deepseek/deepseek-v4-flash-0731
+          provider: nous
+        # Local Qwen is deliberately not advertised. It remains a manual
+        # emergency option and is never selected automatically.

@@ -12,11 +12,15 @@
 # exists for, and the operator, not the teammate, carries the consequence.
 
 model:
-  # Registry name is "openai-api" (native OpenAI), NOT "openai". Leaving this
-  # unset while OPENAI_API_KEY is exported resolves to "openrouter" and sends
-  # requests to the wrong endpoint.
-  provider: openai-api
-  model: gpt-5.4
+  # Each teammate authenticates their own Nous profile after provisioning.
+  provider: nous
+  default: deepseek/deepseek-v4-flash-0731
+  context_length: 131072
+
+image_gen:
+  provider: fal
+  model: fal-ai/flux-2/klein/9b
+  use_gateway: true
 
 memory:
   # Durable memories are proposed, then shown to the profile's owner before they

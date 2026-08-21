@@ -10,7 +10,8 @@
 #   ik_llama -rtr --spec-type mtp      382.7            25.99   <-- 2.7x / 1.8x
 #
 # Tool calling was verified working on both engines (returns `tool_calls` with
-# `arguments` as a JSON string, per the OpenAI spec, which is what Hermes needs).
+# `arguments` as a JSON string, per the compatible chat-completions contract
+# Hermes needs).
 #
 # Fallback: llama.cpp mainline carries the fix for issue #24807 (malformed
 # tool-call XML on Qwen3.6-35B-A3B, ~1 in 128 tool-using requests, fixed in

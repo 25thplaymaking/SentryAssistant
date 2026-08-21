@@ -112,10 +112,11 @@ COPY --chown=hermes:hermes patches/api_server_admin_surface.py /tmp/
 RUN python3 /tmp/api_server_admin_surface.py
 
 COPY --chown=hermes:hermes server_control_mcp.py /opt/sentry-tools/server_control_mcp.py
+COPY --chown=hermes:hermes --chmod=755 start-hermes.sh /home/hermes/start-hermes.sh
 
-EXPOSE 8642
+EXPOSE 8642 8645
 
-# The API server binds loopback by default; inside a container it must bind the
-# container interface so only the compose network can reach it. It is never
-# published to a public interface.
-CMD ["hermes", "gateway"]
+# Start the agent gateway and the raw Nous subscription proxy together. The
+# wrapper treats either child exiting as a container failure and reaps both, so
+# Docker's restart policy restores the complete inference path as one unit.
+CMD ["/home/hermes/start-hermes.sh"]

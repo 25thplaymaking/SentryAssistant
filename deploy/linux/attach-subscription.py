@@ -2,11 +2,11 @@
 """Attach a subscription-backed provider and publish it as a pickable model.
 
     ./attach-subscription.py anthropic
-    ./attach-subscription.py openai-codex --alias chatgpt-codex
+    ./attach-subscription.py nous --alias nous-hosted
     ./attach-subscription.py anthropic --model claude-opus-4-5-20260401
     ./attach-subscription.py --list
 
-A Claude or ChatGPT subscription reaches Hermes through that provider's OWN
+A Nous or Claude subscription reaches Hermes through that provider's own
 OAuth flow (`hermes auth add <provider> --type oauth`), which stores the
 credential in Hermes' auth store inside the profile's runtime home. This script
 never handles, copies, or writes the credential itself -- it only publishes a
@@ -49,9 +49,9 @@ SUBSCRIPTION_PROVIDERS = {
         # has to publish the route.
         "env_token": "CLAUDE_CODE_OAUTH_TOKEN",
     },
-    "openai-codex": {
-        "label": "ChatGPT / Codex subscription",
-        "default_alias": "chatgpt-codex",
+    "nous": {
+        "label": "Nous Portal subscription",
+        "default_alias": "nous-hosted",
     },
 }
 
@@ -83,13 +83,13 @@ def parse_authenticated_providers(auth_list_output: str) -> set[str]:
 
     `auth list` prints one section header per provider that HAS credentials:
 
-        openai-api (1 credentials):
-          #1  OPENAI_API_KEY       api_key env:OPENAI_API_KEY <-
+        nous (1 credentials):
+          #1  Nous Portal OAuth    oauth auth.json <-
 
     Deriving the answer from `auth status` prose instead is a trap this already
     fell into once: the logged-OUT message is
 
-        openai-codex: logged out (No Codex credentials stored. Run `hermes auth`
+        nous: logged out (No Portal credentials stored. Run `hermes auth`
         to authenticate.)
 
     which contains both "credentials" and "authenticate", so keyword matching
@@ -197,7 +197,7 @@ def upsert_model_route(text: str, alias: str, model: str, provider: str) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("provider", nargs="?", help="anthropic | openai-codex")
+    ap.add_argument("provider", nargs="?", help="nous | anthropic")
     ap.add_argument("--alias", help="name shown in the picker")
     ap.add_argument("--model", help="model id (default: chosen from discovery)")
     ap.add_argument("--profile", default=DEFAULT_PROFILE)

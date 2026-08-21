@@ -1,9 +1,9 @@
 # Sentry private control plane.
 #
 # Nothing here publishes to a public interface. PostgreSQL and the Gateway bind
-# loopback only; Hermes is not published at all and is reachable solely on the
-# internal compose network. Public exposure is the ingress layer's job, and it
-# terminates at the Gateway, never at the runtime.
+# loopback only; the Hermes agent API is reachable solely on the internal
+# compose network. The raw Nous subscription proxy is loopback-only for Tardia.
+# Public exposure terminates at the Gateway, never at either runtime endpoint.
 #
 # Secrets come from deploy/linux/.env, which is not in Git.
 
@@ -41,6 +41,7 @@ services:
         HERMES_UID: ${HERMES_UID:-1000}
         HERMES_GID: ${HERMES_GID:-1000}
     restart: unless-stopped
+    init: true
     depends_on:
       server-control-mcp:
         condition: service_healthy
@@ -51,18 +52,9 @@ services:
       API_SERVER_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
       API_SERVER_HOST: 0.0.0.0
       API_SERVER_PORT: "8642"
-      # Inference provider credentials. Without this passthrough the keys sit in
-      # .env and never reach the process, and every turn fails with
-      # "No inference provider configured" — the .env entry alone is not enough.
-      #
-      # All are optional so a provider switch is a config change, not a compose
-      # edit. Which one is ACTIVE is decided by `model.provider` in
-      # hermes/config.yaml, which outranks env autodetection in Hermes'
-      # resolve_provider() chain. Do not rely on autodetection: a bare
-      # OPENAI_API_KEY with no pinned provider resolves to "openrouter",
-      # not native OpenAI.
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      # Nous is authenticated through Hermes's per-profile OAuth store. Optional
+      # alternate providers remain explicit; no environment-key autodetection
+      # can override `model.provider: nous`.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # A Claude SUBSCRIPTION (Pro/Max), as opposed to metered API billing.
       # `claude setup-token` on a machine already signed in mints a long-lived
@@ -86,9 +78,13 @@ services:
       # ./data/hermes/personal unshared. Bound into the webui at the same path so
       # the session metadata is true in both environments.
       - ./data/workspace:/workspace
-    # Deliberately no `ports:` block. Only the Gateway may reach the runtime.
+    ports:
+      # Raw Nous subscription inference for host-local clients such as Tardia.
+      # The proxy accepts any bearer, so it must never bind beyond loopback.
+      - "127.0.0.1:8645:8645"
     expose:
       - "8642"
+      - "8645"
     security_opt:
       - no-new-privileges:true
     networks: [sentry, server-control-tools]

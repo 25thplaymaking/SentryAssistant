@@ -17,7 +17,7 @@
       "cache_read_per_mtok": 0.0,
       "cache_write_per_mtok": 0.0
     },
-    "gpt-5.4": {
+    "deepseek/deepseek-v4-flash-0731": {
       "input_per_mtok": 0.0,
       "output_per_mtok": 0.0,
       "cache_read_per_mtok": 0.0,
