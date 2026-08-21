@@ -206,11 +206,20 @@ async def run_job(
     recorder = ActionRecorder(pool, profile_id)
     # A stream that ends without a completion frame is a failure, not a quiet ok.
     status, summary = "failed", "The turn produced no completion event."
+    # The agent's answer arrives as MESSAGE deltas; the completion frame's own
+    # summary is usually empty on the /v1/responses path. Verified live: the
+    # first fired job recorded status ok with a blank summary. Prefer the
+    # accumulated reply text, keep the completion summary as the fallback.
+    reply = ""
     try:
         async for event in runtime.send_turn(turn):
             await recorder.record(event)
-            if event.type is RuntimeEventType.TURN_COMPLETED:
-                status, summary = "ok", event.summary[:SUMMARY_LIMIT]
+            if event.type is RuntimeEventType.MESSAGE:
+                if len(reply) < SUMMARY_LIMIT:
+                    reply += event.summary or ""
+            elif event.type is RuntimeEventType.TURN_COMPLETED:
+                status = "ok"
+                summary = (reply.strip() or event.summary)[:SUMMARY_LIMIT]
             elif event.type in (RuntimeEventType.TURN_FAILED, RuntimeEventType.ERROR):
                 status = "failed"
                 summary = (event.summary or event.type.value)[:SUMMARY_LIMIT]

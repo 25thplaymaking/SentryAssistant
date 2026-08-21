@@ -169,6 +169,32 @@ class TestRunningJobs:
         assert job_status == "ok"
         assert len(summary) == 500  # runtime yielded 900 chars
 
+    async def test_message_deltas_beat_an_empty_completion_summary(self):
+        """The /v1/responses path streams the answer as MESSAGE deltas and
+        completes with an empty summary — observed live on the first fired
+        job, which recorded ok with a blank last_summary."""
+        class DeltaRuntime(FakeRuntime):
+            async def send_turn(self, request):
+                self.turns.append((request.profile_id, request.prompt))
+                for text in ("OK", ""):
+                    yield RuntimeEvent(
+                        type=RuntimeEventType.MESSAGE, session_id=request.session_id,
+                        correlation_id=request.correlation_id,
+                        occurred_at=datetime.now(timezone.utc), summary=text,
+                    )
+                yield RuntimeEvent(
+                    type=RuntimeEventType.TURN_COMPLETED, session_id=request.session_id,
+                    correlation_id=request.correlation_id,
+                    occurred_at=datetime.now(timezone.utc), summary="",
+                )
+        pool = FakePool([_job()])
+        s = scheduler_for(pool, DeltaRuntime())
+        await s.tick(now=T0)
+        await s.drain()
+        _, job_status, summary = pool.status_writes[-1]
+        assert job_status == "ok"
+        assert summary == "OK"
+
 
 class TestFailureIsolation:
     async def test_a_failing_job_records_failed_and_neighbours_still_fire(self):
