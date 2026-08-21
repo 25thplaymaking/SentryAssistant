@@ -63,6 +63,7 @@ def _job_row(name="brief"):
         "id": uuid4(), "name": name, "schedule": "0 8 * * *",
         "prompt": "morning brief", "enabled": True,
         "created_at": datetime.now(timezone.utc),
+        "last_run_at": None, "last_status": None, "last_summary": None,
     }
 
 

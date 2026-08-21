@@ -15,11 +15,13 @@ RECIPIENT = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
 
 class FakePool:
-    def __init__(self, granted=True, inbox_rows=None):
+    def __init__(self, granted=True, inbox_rows=None, messages=None):
         self.granted = granted
         self.msg_id = uuid4()
         self.inbox_rows = inbox_rows or []
         self.inserts = []
+        #: id -> {"recipient_profile_id", "read_at"}; backs the mark-read route.
+        self.messages = messages or {}
 
     def acquire(self):
         pool = self
@@ -33,6 +35,21 @@ class FakePool:
                         if "INSERT INTO agent_messages" in query:
                             pool.inserts.append(a)  # (sender, recipient, redacted, correlation)
                             return pool.msg_id
+                        if "UPDATE agent_messages" in query:
+                            msg = pool.messages.get(a[0])
+                            if (
+                                msg is not None
+                                and msg["recipient_profile_id"] == a[1]
+                                and msg["read_at"] is None
+                            ):
+                                msg["read_at"] = datetime.now(timezone.utc)
+                                return a[0]
+                            return None
+                        if "SELECT 1 FROM agent_messages" in query:
+                            msg = pool.messages.get(a[0])
+                            if msg is not None and msg["recipient_profile_id"] == a[1]:
+                                return 1
+                            return None
                         return None
 
                     async def fetch(self, query, *a):
@@ -122,3 +139,38 @@ def test_inbox_returns_own_messages():
 
 def test_unauthenticated_is_refused():
     assert build(FakePool()).get("/api/agent-messages").status_code == 401
+
+
+class TestMarkRead:
+    def test_own_unread_message_is_marked(self):
+        msg_id = uuid4()
+        pool = FakePool(messages={msg_id: {"recipient_profile_id": SENDER, "read_at": None}})
+        resp = build(pool).post(f"/api/agent-messages/{msg_id}/read", headers=bearer(SENDER))
+        assert resp.status_code == 200
+        assert resp.json() == {"read": True}
+        assert pool.messages[msg_id]["read_at"] is not None
+
+    def test_already_read_is_idempotent_200(self):
+        msg_id = uuid4()
+        read_at = datetime.now(timezone.utc)
+        pool = FakePool(messages={msg_id: {"recipient_profile_id": SENDER, "read_at": read_at}})
+        resp = build(pool).post(f"/api/agent-messages/{msg_id}/read", headers=bearer(SENDER))
+        assert resp.status_code == 200
+        assert resp.json() == {"read": True}
+        assert pool.messages[msg_id]["read_at"] == read_at  # not re-stamped
+
+    def test_another_recipients_message_is_404_not_403(self):
+        msg_id = uuid4()
+        pool = FakePool(messages={msg_id: {"recipient_profile_id": RECIPIENT, "read_at": None}})
+        resp = build(pool).post(f"/api/agent-messages/{msg_id}/read", headers=bearer(SENDER))
+        assert resp.status_code == 404
+        assert pool.messages[msg_id]["read_at"] is None  # untouched
+
+    def test_missing_message_is_404(self):
+        resp = build(FakePool()).post(
+            f"/api/agent-messages/{uuid4()}/read", headers=bearer(SENDER)
+        )
+        assert resp.status_code == 404
+
+    def test_unauthenticated_is_refused(self):
+        assert build(FakePool()).post(f"/api/agent-messages/{uuid4()}/read").status_code == 401

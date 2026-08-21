@@ -64,6 +64,11 @@ class Settings(BaseSettings):
         description="Selected AgentRuntime. Reversible by configuration.",
     )
 
+    #: IANA zone the cron scheduler evaluates job schedules in
+    #: (SENTRY_CRON_TIMEZONE). The host clock is UTC, so leaving this unset
+    #: shifts every job by the operator's offset; production sets it in .env.
+    cron_timezone: str = "UTC"
+
     bind_host: str = "127.0.0.1"
     bind_port: int = 8090
 

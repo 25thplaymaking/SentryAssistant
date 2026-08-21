@@ -136,3 +136,37 @@ async def inbox(
         )
         for r in rows
     ]
+
+
+@router.post("/{message_id}/read")
+async def mark_read(
+    message_id: UUID, request: Request, caller: Caller = Depends(require_caller)
+) -> dict:
+    """Mark one of the caller's own inbox messages read. Idempotent: marking an
+    already-read message is a 200, because the client's goal state holds."""
+    pool = _pool(request)
+    async with pool.acquire() as conn:
+        marked = await conn.fetchval(
+            """
+            UPDATE agent_messages SET read_at = now()
+            WHERE id = $1 AND recipient_profile_id = $2 AND read_at IS NULL
+            RETURNING id
+            """,
+            message_id,
+            caller.profile_id,
+        )
+        if marked is None:
+            # Distinguish "already read" (idempotent success) from "not yours
+            # or nonexistent" — the latter is a 404 rather than a 403 so a
+            # sender's message IDs cannot be probed from another profile.
+            exists = await conn.fetchval(
+                "SELECT 1 FROM agent_messages"
+                " WHERE id = $1 AND recipient_profile_id = $2",
+                message_id,
+                caller.profile_id,
+            )
+            if not exists:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Not found."
+                )
+    return {"read": True}

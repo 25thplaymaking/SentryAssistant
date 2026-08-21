@@ -23,6 +23,7 @@ from .agent_runtime.endpoints import (
 from .agent_runtime.hermes import HermesInstance, HermesRuntime
 from .auth.tokens import TokenService
 from .config import Settings, get_settings
+from .cron.scheduler import CronScheduler, resolve_zone
 from .routes import admin as admin_routes
 from .routes import agent_admin as agent_admin_routes
 from .routes import agent_messages as agent_messages_routes
@@ -124,9 +125,17 @@ async def lifespan(app: FastAPI):
             # the affected profiles simply fail closed when a turn is attempted.
             pass
 
+    # The scheduler that fires profile_cron_jobs. It reads pool/runtime from
+    # app.state on every tick, so starting it before either is healthy is safe:
+    # a tick without a pool fires nothing (fail closed, same as chat).
+    scheduler = CronScheduler(app, zone=resolve_zone(settings.cron_timezone))
+    app.state.cron_scheduler = scheduler
+    scheduler.start()
+
     try:
         yield
     finally:
+        await scheduler.stop()
         if app.state.pool is not None:
             await app.state.pool.close()
         aclose = getattr(app.state.runtime, "aclose", None)
