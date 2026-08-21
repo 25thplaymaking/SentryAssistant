@@ -45,6 +45,16 @@ services:
     depends_on:
       server-control-mcp:
         condition: service_healthy
+    healthcheck:
+      # Any HTTP answer (401 included) proves the agent API is up; -f would
+      # fail on the auth challenge and report a live agent as dead. The 8645
+      # proxy is deliberately not probed: it is a convenience sidecar and
+      # start-hermes.sh already reaps the pair if either process dies.
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://127.0.0.1:8642/v1/models"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     environment:
       HERMES_HOME: /home/hermes/.hermes
       API_SERVER_ENABLED: "true"
