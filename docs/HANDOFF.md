@@ -1,8 +1,9 @@
 # Frontir Sentry handoff
 
 **Updated 2026-08-21 (America/Toronto).** This file describes the current
-working tree and the live deployment after the finalization pass. Dated
-reports under `docs/handoffs/` remain historical evidence.
+working tree and the live deployment after the finalization and Sol
+continuation passes. Dated reports under `docs/handoffs/` remain historical
+evidence.
 
 ## Current architecture
 
@@ -14,9 +15,12 @@ reports under `docs/handoffs/` remain historical evidence.
 - Chat: WebUI → Gateway `/api/chat/turn` → the caller's own Hermes over
   `/v1/responses`. Sentry turns fail closed without a per-user token — there
   is no shared-credential fallback.
-- Default inference: Nous Portal OAuth, `deepseek-v4-flash-0731`. A raw Nous
-  proxy for host-local clients (Tardia) is published on `127.0.0.1:8645`.
-  Local Qwen (`sentry-llama-1`) is a stopped, manual emergency option.
+- Default inference: Nous Portal OAuth, `deepseek-v4-flash-0731`. The model
+  registry now publishes all 278 interactive, tool-capable, non-batch models
+  advertised by the authenticated Nous catalogue, plus the friendly default
+  alias. A raw Nous proxy for host-local clients (Tardia) is published on
+  `127.0.0.1:8645`. Local Qwen (`sentry-llama-1`) is a stopped, manual
+  emergency option.
 - The desktop shell binds IPv6 loopback forwards (IPv4 loopback is broken on
   Bryce's machine): WebUI `[::1]:8787`, Gateway `[::1]:8090`, Server Control
   `[::1]:17443`.
@@ -55,10 +59,17 @@ were reconciled first (3c882db8).
 uncommitted drift; it is now in git (988bc57) with `start-hermes.sh` running
 the agent gateway and the 8645 proxy as a reaped pair.
 
+**Sol continuation completed.** Gateway cron hardening is deployed (eb50e5d,
+migration 014); the second WebUI review wave is deployed (3afce1d4); and the
+interactive Nous catalogue is mirrored into the owner seed, teammate seed,
+and live owner profile (0d1278f). The live pre-catalogue config is retained at
+`data/hermes/personal/config.yaml.pre-nous-catalog-20260821` for rollback.
+
 ## Verification (2026-08-21)
 
-- Gateway suite: **504 passed** (was 447 passed / 2 stale-test failures at
-  session start, not 449 as previously recorded).
+- Gateway suite: **515 passed** at eb50e5d. Live re-verification rejected an
+  invalid schedule with 422, fired an every-minute job through Hermes, stored
+  `ok` plus the exact reply, and deleted the throwaway job.
 - WebUI focused sentry suites: 75 passed; frontir harness 39/39.
 - WebUI full suite on grain: **15024 passed, 0 failed, 0 errors** — fully
   green for the first time. Two long-standing lies died here: the "19
@@ -66,8 +77,15 @@ the agent gateway and the 8645 proxy as a reaped pair.
   (`tag.gpgsign=true`) breaking the fixtures' throwaway repos — conftest now
   nulls `GIT_CONFIG_GLOBAL/SYSTEM` for the run (8780ccb9); and every locale
   (not just en/zh) needs new UI strings or its parity test fails.
+- After 3afce1d4, the full grain run remained green: **14993 passed, 268
+  environment-dependent skips, 2 xfailed, 1 xpassed, 0 failed, 0 errors**.
+  The frontir browser-layer harness remained 39/39.
 - Live: gateway `/health/ready` ready, all containers healthy, scheduler
   fired a real job through Hermes/deepseek and recorded `ok` + the reply.
+  Hermes and Gateway each advertise 280 unique picker entries (278 catalogue
+  models, the friendly alias, and `hermes-agent`), with batch and embedding
+  entries absent. A real Gateway turn selected `openai/gpt-5.6-sol` and the
+  completion evidence reported that exact model.
 
 ## Deploy loop (corrected)
 
@@ -92,7 +110,7 @@ installed on 2026-08-18 but left disabled until today; both are verified live
 
 New SQL migrations are applied out-of-band (all are idempotent):
 `docker exec -i sentry-postgres-1 psql -U $POSTGRES_USER -d $POSTGRES_DB < server/sentry_gateway/migrations/NNN_*.sql`
-(010–013 are applied.)
+(010–014 are applied.)
 
 ## Known remaining items
 

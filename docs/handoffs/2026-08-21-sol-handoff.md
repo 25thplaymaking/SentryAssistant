@@ -7,6 +7,35 @@ architecture; this file is the work ledger and the queue.
 
 ---
 
+## Sol continuation — completed later on 2026-08-21
+
+- Gateway cron hardening commit `eb50e5d` was rebuilt and deployed. Readiness
+  passed; invalid schedule creation returned 422; a throwaway every-minute job
+  fired through Hermes, recorded `ok` and the exact `CRON_OK` summary, then was
+  deleted.
+- WebUI review fixes were recovered from `stash@{0}`, completed across all 15
+  locales, committed as `3afce1d4`, mirrored to GitHub, rebuilt, and deployed.
+  The four `test_sprint3.py` workspace failures were proven to be Windows-only:
+  they reproduced at clean `df1ac48f` on Windows and passed on grain. Focused
+  verification was 348 passed plus the four known Windows failures; the
+  browser-layer harness was 39/39. The required full grain suite finished with
+  **14993 passed, 268 environment-dependent skips, 2 xfailed, 1 xpassed, 0
+  failed, and 0 errors**.
+- The authenticated Nous catalogue exposed 373 entries. The picker now carries
+  the complete interactive agent subset: 278 entries that advertise tool use
+  and are not batch-only. Embeddings and batch models are deliberately absent.
+  The current short default alias remains, so Hermes and Gateway each advertise
+  280 unique entries including `hermes-agent`. Owner and teammate seeds were
+  committed as `0d1278f`; the live owner config was updated with a dated backup.
+  A real Gateway turn selected `openai/gpt-5.6-sol` and completion evidence
+  reported that exact model.
+
+The immediate queue in sections 3 and 4 is complete. Section 6 remains an
+optional follow-on polish queue; Kanban remains the separately scoped product
+decision described in section 5.
+
+---
+
 ## 1. State of the world (verified end of day)
 
 - **Live and healthy on grain** (`bishop@205.209.116.114`): gateway, webui,
