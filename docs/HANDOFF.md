@@ -18,8 +18,9 @@ evidence.
 - Default inference: Nous Portal OAuth, `deepseek-v4-flash`, for chat,
   delegation, compression, and background review. It was the least expensive
   interactive, tool-capable DeepSeek route in the authenticated catalogue when
-  selected. The registry publishes 276 compatible catalogue models plus the
-  friendly default alias; both GPT-5.6 Sol variants are deliberately excluded.
+  selected. The registry publishes all 278 compatible catalogue models plus the
+  friendly default alias; model availability does not change the DeepSeek
+  default.
   A raw Nous proxy for host-local clients (Tardia) is published on
   `127.0.0.1:8645`. Local Qwen (`sentry-llama-1`) is a stopped, manual
   emergency option.
@@ -84,9 +85,9 @@ and live owner profile (0d1278f). The live pre-catalogue config is retained at
   The frontir browser-layer harness remained 39/39.
 - Live: gateway `/health/ready` ready, all containers healthy, scheduler
   fired a real job through Hermes/deepseek and recorded `ok` + the reply.
-  Hermes and Gateway each advertise 278 unique picker entries (276 catalogue
-  models, the friendly alias, and `hermes-agent`), with batch, embedding, and
-  GPT-5.6 Sol entries absent.
+  Hermes and Gateway each advertise 280 unique picker entries (278 catalogue
+  models, the friendly alias, and `hermes-agent`), with batch and embedding
+  entries absent.
 
 ## Deploy loop (corrected)
 

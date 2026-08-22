@@ -41,6 +41,11 @@ removed from the owner live registry and both provisioning seeds. The earlier
 Sol turn above remains historical verification evidence only; it never changed
 the default.
 
+Latest preference clarification: both Sol routes were restored to the optional
+picker so it again mirrors all 278 interactive Nous models. DeepSeek remains the
+default for every automatic path; restoring catalogue visibility did not alter
+the selection.
+
 ---
 
 ## 1. State of the world (verified end of day)
