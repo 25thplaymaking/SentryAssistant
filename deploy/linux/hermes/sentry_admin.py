@@ -38,6 +38,7 @@ import secrets
 import shutil
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from aiohttp import web
@@ -215,6 +216,249 @@ def _pool_status(provider: str) -> Dict[str, Any]:
     return {"authenticated": bool(creds), "credentials": creds}
 
 
+# A credential and a selectable route are two halves of one user action in
+# Sentry. Hermes intentionally keeps them separate, but exposing that split in
+# the browser made a successful sign-in end in an operator-only config edit and
+# restart. These providers are subscription accounts whose safe chat catalog is
+# already owned by ``hermes_cli.models.provider_model_ids``. Nous is different:
+# the deployment seed carries its deliberately filtered interactive catalog, so
+# connecting it activates those existing routes instead of replacing them with
+# the broader API catalog (which also contains batch-only entries).
+_SUBSCRIPTION_PROVIDER_IDS = frozenset(
+    {"nous", "anthropic", "openai-codex", "xai-oauth", "minimax-oauth"}
+)
+_MANAGED_SUBSCRIPTION_ROUTE_PREFIXES = {
+    "anthropic": "claude-plan",
+    "openai-codex": "chatgpt-plan",
+    "xai-oauth": "grok-plan",
+    "minimax-oauth": "minimax-plan",
+}
+
+
+def _provider_route_models(adapter, provider: str) -> List[Dict[str, str]]:
+    """Selectable aliases currently active for one credential provider.
+
+    The first alias for a resolved model wins. This keeps the friendly
+    ``deepseek-v4-flash`` alias while suppressing its later raw Nous duplicate,
+    so the account card reports the actual 278-model catalog rather than 279
+    route names for 278 model targets.
+    """
+    out: List[Dict[str, str]] = []
+    seen_models: set[str] = set()
+    routes = getattr(adapter, "_model_routes", {}) or {}
+    for alias, cfg in routes.items():
+        if not isinstance(cfg, dict) or str(cfg.get("provider") or "") != provider:
+            continue
+        model = str(cfg.get("model") or "").strip()
+        alias_text = str(alias or "").strip()
+        if not alias_text or not model or model in seen_models:
+            continue
+        seen_models.add(model)
+        out.append({"id": alias_text, "model": model})
+    return out
+
+
+def _initialize_subscription_routes(adapter) -> None:
+    """Capture configured subscription routes and hide logged-out providers.
+
+    ``adapter._model_routes`` is the live registry read by both ``/v1/models``
+    and request routing. The dormant copy is process-local and contains no
+    credentials; it lets a reconnect reactivate persisted routes immediately,
+    without restarting the container or reparsing operator config.
+    """
+    dormant: Dict[str, Dict[str, Dict[str, Any]]] = {
+        provider: {} for provider in _SUBSCRIPTION_PROVIDER_IDS
+    }
+    for alias, cfg in list((getattr(adapter, "_model_routes", {}) or {}).items()):
+        if not isinstance(cfg, dict):
+            continue
+        provider = str(cfg.get("provider") or "").strip()
+        if provider in dormant:
+            dormant[provider][str(alias)] = dict(cfg)
+    adapter._sentry_subscription_routes = dormant
+    for provider in _SUBSCRIPTION_PROVIDER_IDS:
+        if not _pool_status(provider).get("authenticated"):
+            _deactivate_subscription_routes(adapter, provider)
+
+
+def _activate_subscription_routes(adapter, provider: str) -> None:
+    """Publish a provider's persisted routes in the live adapter registry."""
+    dormant = getattr(adapter, "_sentry_subscription_routes", {}) or {}
+    routes = dormant.get(provider, {}) if isinstance(dormant, dict) else {}
+    live = getattr(adapter, "_model_routes", None)
+    if not isinstance(live, dict):
+        raise RuntimeError("Hermes model route registry is unavailable.")
+    for alias, cfg in routes.items():
+        live[alias] = dict(cfg)
+
+
+def _deactivate_subscription_routes(adapter, provider: str) -> None:
+    """Stop advertising one logged-out account while retaining its route plan."""
+    live = getattr(adapter, "_model_routes", None)
+    if not isinstance(live, dict):
+        return
+    dormant = getattr(adapter, "_sentry_subscription_routes", None)
+    if not isinstance(dormant, dict):
+        dormant = {}
+        adapter._sentry_subscription_routes = dormant
+    saved = dormant.setdefault(provider, {})
+    for alias, cfg in list(live.items()):
+        if isinstance(cfg, dict) and str(cfg.get("provider") or "") == provider:
+            saved[str(alias)] = dict(cfg)
+            live.pop(alias, None)
+
+
+def _clean_subscription_models(models: Any) -> List[str]:
+    """Bound and normalize the upstream catalog before it reaches config."""
+    out: List[str] = []
+    seen: set[str] = set()
+    for raw in models if isinstance(models, (list, tuple)) else []:
+        model = str(raw or "").strip()
+        if (
+            not model
+            or len(model) > 256
+            or any(ord(ch) < 32 for ch in model)
+            or model in seen
+        ):
+            continue
+        seen.add(model)
+        out.append(model)
+        if len(out) >= 500:
+            break
+    return out
+
+
+def _persist_subscription_routes(
+    config_path: Path, provider: str, models: Any
+) -> Dict[str, Dict[str, str]]:
+    """Atomically replace one provider's managed route block in config.yaml.
+
+    String-level insertion preserves the deployment's operator comments. The
+    finished document is parsed before replace, so a moved/invalid config seam
+    fails closed and the live picker is not updated with a route that would
+    disappear or break on restart.
+    """
+    prefix = _MANAGED_SUBSCRIPTION_ROUTE_PREFIXES.get(provider)
+    if not prefix:
+        raise ValueError(f"Provider '{provider}' does not use managed routes.")
+    clean_models = _clean_subscription_models(models)
+    if not clean_models:
+        raise ValueError("The connected account reported no chat models.")
+
+    routes: Dict[str, Dict[str, str]] = {}
+    entry_lines: List[str] = []
+    for model in clean_models:
+        alias = f"{prefix}/{model}"
+        routes[alias] = {"model": model, "provider": provider}
+        # JSON strings are valid YAML scalars and safely escape quotes, control
+        # characters and provider-supplied punctuation without inventing a YAML
+        # quoting routine here.
+        entry_lines.extend(
+            [
+                f"        {json.dumps(alias, ensure_ascii=True)}:\n",
+                f"          model: {json.dumps(model, ensure_ascii=True)}\n",
+                f"          provider: {provider}\n",
+            ]
+        )
+
+    marker_pattern = re.compile(
+        r"^      model_routes:(?:[ \t]*\{\})?[ \t]*\n", re.M
+    )
+    begin = f"        # SENTRY SUBSCRIPTION ROUTES: {provider} (managed)\n"
+    end = f"        # END MANAGED ROUTES: {provider}\n"
+    text = Path(config_path).read_text(encoding="utf-8")
+    markers = list(marker_pattern.finditer(text))
+    if len(markers) != 1:
+        raise ValueError(
+            "The profile must have exactly one api_server model_routes registry; "
+            "no routes were changed."
+        )
+    block = begin + "".join(entry_lines) + end
+    block_pattern = re.compile(re.escape(begin) + r".*?" + re.escape(end), re.S)
+    matches = list(block_pattern.finditer(text))
+    if len(matches) > 1:
+        raise ValueError(
+            f"The profile has duplicate managed route blocks for {provider}; no routes were changed."
+        )
+    if matches:
+        updated = block_pattern.sub(block, text, count=1)
+    else:
+        marker = markers[0]
+        # Expand an explicit empty mapping (``model_routes: {}``) into the
+        # normal block form before inserting the managed entries.
+        updated = text[: marker.start()] + "      model_routes:\n" + block + text[marker.end() :]
+
+    # Validate the exact persisted shape before replacing the source file.
+    import yaml
+
+    parsed = yaml.safe_load(updated)
+    try:
+        persisted = parsed["platforms"]["api_server"]["extra"]["model_routes"]
+    except (KeyError, TypeError) as exc:
+        raise ValueError("The updated model route registry is invalid; no routes were changed.") from exc
+    if not isinstance(persisted, dict) or any(persisted.get(k) != v for k, v in routes.items()):
+        raise ValueError("The updated model routes did not validate; no routes were changed.")
+
+    path = Path(config_path)
+    temp = path.with_name(f".{path.name}.sentry-{uuid.uuid4().hex}.tmp")
+    try:
+        temp.write_text(updated, encoding="utf-8")
+        try:
+            os.chmod(temp, path.stat().st_mode)
+        except OSError:
+            pass
+        os.replace(temp, path)
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
+    return routes
+
+
+def _discover_subscription_models(provider: str) -> List[str]:
+    """Ask Hermes' canonical provider catalog for the connected account."""
+    from hermes_cli.models import provider_model_ids
+
+    return _clean_subscription_models(provider_model_ids(provider, force_refresh=True))
+
+
+async def _ensure_subscription_routes(
+    adapter, provider: str, *, refresh: bool = False
+) -> Dict[str, Any]:
+    """Make an authenticated provider selectable and report the honest result."""
+    if provider not in _SUBSCRIPTION_PROVIDER_IDS:
+        return {"models": [], "route_error": None}
+
+    dormant = getattr(adapter, "_sentry_subscription_routes", {}) or {}
+    existing = dormant.get(provider, {}) if isinstance(dormant, dict) else {}
+    if provider == "nous" or (existing and not refresh):
+        _activate_subscription_routes(adapter, provider)
+    else:
+        try:
+            loop = asyncio.get_running_loop()
+            models = await loop.run_in_executor(None, _discover_subscription_models, provider)
+            config_path = Path(os.getenv("HERMES_HOME", "~/.hermes")).expanduser() / "config.yaml"
+            routes = _persist_subscription_routes(config_path, provider, models)
+            # Replace only routes owned by this provider. Unique plan prefixes
+            # prevent collisions with Nous or another connected subscription.
+            _deactivate_subscription_routes(adapter, provider)
+            adapter._sentry_subscription_routes[provider] = routes
+            _activate_subscription_routes(adapter, provider)
+        except Exception as exc:  # noqa: BLE001 — rendered as a bounded UI error
+            logger.warning("Could not publish subscription models for %s: %s", provider, exc)
+            return {
+                "models": _provider_route_models(adapter, provider),
+                "route_error": "Connected, but Sentry could not add this account's models. Try Refresh.",
+            }
+
+    choices = _provider_route_models(adapter, provider)
+    return {
+        "models": choices,
+        "route_error": None if choices else "Connected, but this account reported no selectable models.",
+    }
+
+
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 _HTTPS_URL_RE = re.compile(r"https://[^\s]+")
 _USER_CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]{3,}$", re.IGNORECASE)
@@ -239,6 +483,8 @@ def _public_oauth_flow(flow_id: str, flow: Dict[str, Any]) -> Dict[str, Any]:
         "instructions": flow.get("instructions"),
         "error": flow.get("error"),
         "credential": flow.get("credential"),
+        "models": flow.get("models") or [],
+        "route_error": flow.get("route_error"),
     }
 
 
@@ -300,7 +546,7 @@ async def _stop_oauth_process(flow: Dict[str, Any]) -> None:
         await process.wait()
 
 
-async def _run_device_oauth(flow_id: str) -> None:
+async def _run_device_oauth(flow_id: str, adapter) -> None:
     """Run one fixed Hermes provider login without exposing a terminal.
 
     This deliberately invokes the installed, pinned Hermes CLI rather than
@@ -351,6 +597,9 @@ async def _run_device_oauth(flow_id: str) -> None:
         if return_code == 0 and status.get("authenticated"):
             credentials = status.get("credentials") or []
             credential = credentials[-1] if credentials else {}
+            route_result = await _ensure_subscription_routes(
+                adapter, provider, refresh=True
+            )
             flow.update(
                 status="success",
                 credential={
@@ -359,6 +608,7 @@ async def _run_device_oauth(flow_id: str) -> None:
                     "auth_type": credential.get("auth_type"),
                 },
                 error=None,
+                **route_result,
             )
         else:
             # CLI output is intentionally never reflected into the browser: a
@@ -387,7 +637,7 @@ async def _run_device_oauth(flow_id: str) -> None:
         flow["ready"].set()
 
 
-async def _start_device_oauth(provider: str) -> Dict[str, Any]:
+async def _start_device_oauth(provider: str, adapter) -> Dict[str, Any]:
     _sweep_flows()
     flow_id = uuid.uuid4().hex
     flow: Dict[str, Any] = {
@@ -399,7 +649,7 @@ async def _start_device_oauth(provider: str) -> Dict[str, Any]:
         "instructions": "Preparing a secure authorization code…",
     }
     _flows[flow_id] = flow
-    flow["task"] = asyncio.create_task(_run_device_oauth(flow_id))
+    flow["task"] = asyncio.create_task(_run_device_oauth(flow_id, adapter))
     try:
         await asyncio.wait_for(flow["ready"].wait(), timeout=8)
     except asyncio.TimeoutError:
@@ -447,6 +697,16 @@ def _build_auth_handlers(adapter) -> List[tuple]:
         out = []
         for provider in sorted(PROVIDER_REGISTRY):
             status = _pool_status(provider)
+            if provider in _SUBSCRIPTION_PROVIDER_IDS:
+                if status.get("authenticated"):
+                    status.update(
+                        await _ensure_subscription_routes(
+                            adapter, provider, refresh=False
+                        )
+                    )
+                else:
+                    _deactivate_subscription_routes(adapter, provider)
+                    status.update(models=[], route_error=None)
             status["id"] = provider
             status["name"] = getattr(PROVIDER_REGISTRY[provider], "name", provider)
             status["oauth_capable"] = provider in _OAUTH_CAPABLE_PROVIDERS
@@ -481,7 +741,7 @@ def _build_auth_handlers(adapter) -> List[tuple]:
             )
 
         if provider in _DEVICE_OAUTH_PROVIDERS:
-            return web.json_response(await _start_device_oauth(provider))
+            return web.json_response(await _start_device_oauth(provider, adapter))
 
         try:
             mod = _anthropic_oauth_module()
@@ -599,7 +859,12 @@ def _build_auth_handlers(adapter) -> List[tuple]:
             logger.warning("Failed to persist %s credential: %s", provider, exc)
             return _err(500, f"Token obtained but could not be stored: {exc}")
 
-        return web.json_response({"provider": provider, "credential": persisted})
+        route_result = await _ensure_subscription_routes(
+            adapter, provider, refresh=True
+        )
+        return web.json_response(
+            {"provider": provider, "credential": persisted, **route_result}
+        )
 
     async def oauth_status(request: "web.Request") -> "web.Response":
         """GET /v1/auth/oauth/{flow_id} — browser-safe flow progress."""
@@ -667,7 +932,17 @@ def _build_auth_handlers(adapter) -> List[tuple]:
         except Exception as exc:  # noqa: BLE001
             return _err(500, f"Could not clear credentials: {exc}")
 
-        return web.json_response({"provider": provider, "removed": removed})
+        remaining = _pool_status(provider)
+        if provider in _SUBSCRIPTION_PROVIDER_IDS and not remaining.get("authenticated"):
+            _deactivate_subscription_routes(adapter, provider)
+
+        return web.json_response(
+            {
+                "provider": provider,
+                "removed": removed,
+                "models": _provider_route_models(adapter, provider),
+            }
+        )
 
     return [
         ("GET", "/v1/auth/providers", list_providers),
@@ -871,6 +1146,7 @@ def _apply_pending(subsystem: str, record: Dict[str, Any]) -> Tuple[bool, str]:
 
 def build_routes(adapter) -> List[tuple]:
     """Return ``(method, path, handler)`` rows for the Sentry admin surface."""
+    _initialize_subscription_routes(adapter)
     routes = _build_auth_handlers(adapter) + _build_pending_handlers(adapter)
     logger.info("api_server: Sentry admin surface registered (%d routes)", len(routes))
     return routes
