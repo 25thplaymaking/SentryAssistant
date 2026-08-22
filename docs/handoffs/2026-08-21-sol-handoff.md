@@ -7,6 +7,60 @@ architecture; this file is the work ledger and the queue.
 
 ---
 
+## Dedicated design follow-up — completed and deployed 2026-08-22
+
+The requested follow-up with the dedicated `ui-ux-pro-max:design` guidance is
+live for end users. It is a bounded refinement of the existing Chat/Work model
+picker rather than a rebrand or a new settings surface.
+
+- The final SentryWebUI head is `3248caee`. It supersedes the intermediate
+  design head `1a6de7e7`, is clean in `/srv/sentry/webui`, and is present at the
+  same commit in the private remote and GitHub mirror.
+- The picker now has a sticky composed header: the account/runtime advisory is
+  split into a strong scope statement and quieter detail, and model search stays
+  available while the 299-row catalogue scrolls. The surface is 448 px on
+  desktop with restrained layered shadow, contained overscroll, and stable
+  scrollbar space.
+- Provider and vendor headings have clearer hover feedback. The selected model
+  row has a theme-token accent rail, stronger name hierarchy, and more readable
+  secondary identifiers in both themes. Mobile retains 44 px search controls
+  and has no horizontal overflow.
+- Authenticated production QA rendered all **299** choices, with **OpenAI Codex
+  (8)** first, **Nous Portal (278)** available, and
+  `deepseek-v4-flash` selected. The header remained fixed after 850–900 px of
+  picker scrolling; Escape returned focus to the correct desktop and mobile
+  model triggers. Dark desktop, dark 390 px mobile, and light desktop captures
+  are stored in
+  `C:\Users\Bryce\Documents\ServerWork\output\playwright\sentry-design-pass`.
+- Live QA caught and fixed one mount-order defect before handoff: the initial
+  sticky wrapper was empty because its children were reparented immediately
+  before the catalogue rebuild. `3248caee` keeps both controls inside the
+  wrapper and includes a regression assertion for that exact failure.
+- Authoritative verification on the exact final head: **15032 passed, 268
+  skipped, 2 xfailed, 1 xpassed, 13 warnings, and 45 subtests passed**. The
+  focused picker suite, JavaScript syntax check, and whitespace check also
+  passed. A fresh production tab had no console errors.
+- There are no routing or default changes. Chat, delegation, compression, and
+  background review all remain provider `nous` with
+  `deepseek/deepseek-v4-flash`; no Sol model is automatic. Live `/api/models`
+  reports the Codex workstation runtime available with both `server-work` and
+  `enfusion` workspaces.
+- The release sweep found the hidden Windows bridge process connected but with
+  a stale heartbeat. With zero work orders in flight, its existing scheduled
+  task was restarted automatically; the same enrolled device and execution-node
+  identities resumed sub-five-second heartbeats. No server action was handed
+  to the user.
+- All six production services are running and every configured healthcheck is
+  healthy. Public `/health` is `ok`. No new QA enrollment/device was created;
+  the existing signed-in browser identity was reused, the stored dark theme was
+  restored after the light-only visual probe, and all QA tabs were closed.
+
+Minimum architecture decision: use the existing picker DOM and theme tokens.
+No dependency, service, screen, route, persistent state, or design-system layer
+was added.
+
+---
+
 ## Final model-picker UI pass — completed and deployed 2026-08-22
 
 The requested final `ui-ux-pro-max` pass is live for end users. It preserves
