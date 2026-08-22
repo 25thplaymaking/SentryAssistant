@@ -7,6 +7,110 @@ architecture; this file is the work ledger and the queue.
 
 ---
 
+## Functional Sentry surface and native Codex controls — completed and deployed 2026-08-22
+
+This continuation addresses the gap between advertising features and executing
+them. The Chat/Work surface, connected-model picker, native Codex controls, and
+left navigation now resolve to live backends and real state. The implementation
+is deployed to all users; no server action is handed to the user.
+
+- Runtime feature heads are SentryAssistant `bd9ca89` and SentryWebUI
+  `320f0701`; this handoff-only commit follows the runtime commit. Both runtime
+  heads are pushed to the private remotes and GitHub mirrors and are the exact
+  commits checked out in `/srv/sentry/repo` and `/srv/sentry/webui`.
+- Selecting a live `chatgpt-plan/*` model automatically moves that session to
+  **Work** and reveals the executable native surface in context. Workspace,
+  turn/review action, Default/Plan collaboration, model-supported reasoning,
+  personality, approval policy, sandbox, and review target are persisted with
+  the session, signed into the work order, validated by the Windows node, and
+  sent to the official Codex App Server through `thread/settings/update`,
+  `turn/start`, or `review/start`. These are not decorative controls.
+- The native inventory drawer is populated from the signed-in Codex
+  installation through the App Server's model, skill, app, MCP, plugin, hook,
+  collaboration-mode, and capability endpoints. Production currently reports
+  8 Codex models, 154 skills, 17 MCP servers, 31 plugins, 0 installed apps, and
+  0 hooks. Empty categories are represented honestly rather than claimed as
+  installed.
+- Interactive Codex approvals and multi-question input use the existing Sentry
+  cards and relay exact, profile-bound responses to the waiting App Server
+  request. Plans, review/diff events, tool activity, reasoning, messages,
+  token/rate-limit updates, interruption, local thread continuation, sandbox,
+  filesystem/worktree access, web search, images, subagents, and MCP activity
+  flow through the real native event channel.
+- Chat remains the Hermes assistant lane. Its automatic provider is still
+  `nous`, model `deepseek/deepseek-v4-flash`, reasoning `low`. Delegation,
+  compression, and background review also remain Nous DeepSeek Flash. No Sol
+  model is selected automatically. Selecting any non-Codex model clears the
+  native controls and routes back through Hermes.
+- The model picker remains in Chat and Work, groups only linked/available
+  providers, and contains 299 selectable choices. All eight preserved active
+  browser sessions independently returned HTTP 200 from the live model
+  boundary with the complete 300-entry API payload.
+- Every left navigation destination now has a functioning production data
+  source plus visible orientation, **Guide & FAQ**, and a safe **Try it** entry
+  point. Work is a real six-column durable work-order board with transitions
+  and details; Skills merges the installed Codex inventory; Memory exposes
+  user/memory/soul state; Files shows the linked workstation workspaces;
+  Profiles, Plan, and Insights/Activity use their live Gateway projections.
+  Unsupported Sentry attachments and generic reasoning toggles remain hidden
+  instead of implying a capability that the selected runtime cannot execute.
+- The requested `ui-ux-pro-max` pass followed by the dedicated
+  `ui-ux-pro-max:design` pass kept controls in the task context, clarified
+  disclosure and status semantics, preserved keyboard/focus behavior, added
+  44 px mobile targets, removed horizontal overflow, respected reduced motion,
+  and avoided adding a second settings or feature-gallery surface.
+- Migration `016_native_runtime_options.sql` is applied. The Windows task
+  **Frontir Sentry Execution Node** is running the hidden release
+  `C:\Users\Bryce\AppData\Local\SentryAssistant\node\releases\bd9ca89\sentry-node.exe`.
+  After the final native turn, resident process counts remained `cmd.exe=22`,
+  `node.exe=26`, with exactly one Sentry node process; the smoke added no leak
+  or visible console process.
+- Final production proof selected `chatgpt-plan/gpt-5.4-mini`, `server-work`,
+  read-only sandbox, turn/default, `low` effort, pragmatic personality,
+  on-request approval, and uncommitted-changes review target. The live stream
+  returned HTTP 200, emitted 28 events, replied exactly
+  `SENTRY_NATIVE_OPTIONS_READY`, ended with `turn.completed`, and persisted a
+  `succeeded` run whose work order is `readyForReview` with every option intact.
+  A preceding diagnostic deliberately injected `minimal`, which the App Server
+  correctly refused because that effort cannot be combined with `web_search`;
+  the live model inventory and UI offer `low` through `xhigh` for this model, so
+  that invalid diagnostic combination is not user-selectable.
+- Verification on the exact runtime heads: Gateway **555 passed**; Windows node
+  **108 total, 0 failed, 2 opt-in skipped**; protocol contracts **114 total, 0
+  failed**; C# release build **0 warnings, 0 errors**. The authoritative remote
+  WebUI suite completed with **15076 passed, 296 skipped, 2 xfailed, 1 xpassed,
+  13 warnings, and 45 subtests passed**. Focused native controls (11),
+  functional panels (5), model registry (11), memory (13), extensions (24),
+  and context (12) all passed, as did JavaScript syntax, Python compilation,
+  and whitespace checks.
+- Release QA briefly replaced the WebUI session file with a root-owned
+  temporary copy, which made the WebUI initialize an empty store. This was
+  caught immediately. The exact eight unexpired sessions were restored from
+  the nightly grain backup with correct ownership/mode; stale refresh rows for
+  their two device identities were revoked and each session received a fresh,
+  matching access/refresh pair. Every restored session now returns HTTP 200 and
+  the full model payload. The deliberately revoked QA identity stayed revoked,
+  credential-bearing temporary files were removed, and end users do not need
+  to sign in again.
+- All six production services are running and every configured healthcheck is
+  healthy. Public `/health` is `ok`, the edge is serving application version
+  `source-5dfd2355726bc99b`, the production QA tabs are closed, and the local
+  and remote runtime worktrees are clean.
+
+Honest boundary: Sentry executes every relevant feature exposed by the public
+Codex App Server contract and the connected local installation. It cannot
+import private ChatGPT consumer UI, server-side chat history/memory, or an
+unpublished OpenAI feature with no App Server API. The UI now distinguishes
+reported, installed, unavailable, and unsupported capabilities instead of
+presenting those private surfaces as if they were wired.
+
+Minimum architecture decision: extend the existing session metadata, signed
+work order, outbound Windows node, and existing panels. No dependency, second
+queue, inbound workstation listener, generic remote shell, feature-gallery
+screen, or new credential store was added.
+
+---
+
 ## Unavailable-session recovery — completed and deployed 2026-08-22
 
 The WebUI no longer strands someone on **Session not available in web UI.**
