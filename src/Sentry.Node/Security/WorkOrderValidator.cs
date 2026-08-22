@@ -27,7 +27,9 @@ public sealed record ValidatedWorkOrder(
     string Harness,
     string Mode,
     string CorrelationId,
-    string Nonce);
+    string Nonce,
+    string? RuntimeSessionId,
+    string? RuntimeModel);
 
 /// <summary>
 /// Validates a Gateway-signed work order before anything executes.
@@ -171,6 +173,8 @@ public sealed class WorkOrderValidator
             Harness: harness,
             Mode: mode,
             CorrelationId: Claim("cid"),
-            Nonce: nonce);
+            Nonce: nonce,
+            RuntimeSessionId: principal.FindFirst("rsid")?.Value,
+            RuntimeModel: principal.FindFirst("rmodel")?.Value);
     }
 }

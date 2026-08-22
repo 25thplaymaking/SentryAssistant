@@ -59,14 +59,15 @@ def sign_work_order(
     harness: str,
     mode: WorkOrderMode,
     correlation_id: str,
+    runtime_session_id: str | None = None,
+    runtime_model: str | None = None,
     ttl: timedelta = DEFAULT_WORK_ORDER_TTL,
     algorithm: str = "HS256",
 ) -> SignedWorkOrder:
     now = _now()
     expires_at = now + ttl
     nonce = secrets.token_urlsafe(24)
-    token = jwt.encode(
-        {
+    claims = {
             "iss": ISSUER,
             "aud": Audience.WORK_ORDER.value,
             "sub": requesting_user_id,
@@ -81,7 +82,13 @@ def sign_work_order(
             "nonce": nonce,
             "iat": int(now.timestamp()),
             "exp": int(expires_at.timestamp()),
-        },
+        }
+    if runtime_session_id:
+        claims["rsid"] = runtime_session_id
+    if runtime_model:
+        claims["rmodel"] = runtime_model
+    token = jwt.encode(
+        claims,
         signing_key,
         algorithm=algorithm,
     )

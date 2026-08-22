@@ -78,6 +78,51 @@ class FakeRuntime:
         )
 
 
+class NativeAwareRuntime(FakeRuntime):
+    def __init__(self):
+        super().__init__(
+            [PROFILE_A],
+            models=("deepseek/deepseek-chat", "chatgpt-plan/gpt-5.6-sol"),
+            providers=[
+                {
+                    "id": "openai-codex",
+                    "name": "OpenAI Codex",
+                    "authenticated": True,
+                    "native_runtime": "codex",
+                    "models": [
+                        {"id": "chatgpt-plan/gpt-5.6-sol", "model": "gpt-5.6-sol"}
+                    ],
+                }
+            ],
+        )
+        self.workspaces = []
+
+    async def native_runtime_status(self, _profile_id):
+        return {
+            "available": True,
+            "node_name": "Bryce-PC",
+            "version": "codex-cli 0.144.6",
+            "auth_mode": "chatgpt",
+            "features": ["threads", "skills", "apps", "mcp", "sandbox", "approvals"],
+            "workspaces": [{"id": "server-work", "modes": ["readOnly", "workspaceWrite"]}],
+        }
+
+    def experience_for_model(self, model, requested):
+        return RuntimeExperience.WORK if str(model or "").startswith("chatgpt-plan/") else requested
+
+    async def send_turn(self, request):
+        self.turns.append((request.profile_id, request.prompt, request.model))
+        self.experiences.append(request.experience)
+        self.workspaces.append(request.workspace_id)
+        yield RuntimeEvent(
+            type=RuntimeEventType.TURN_COMPLETED,
+            session_id=request.session_id,
+            correlation_id=request.correlation_id,
+            occurred_at=_now(),
+            summary="done",
+        )
+
+
 class FakePool:
     def acquire(self):
         class Ctx:
@@ -194,6 +239,42 @@ class TestAdvertisedList:
     def test_models_endpoint_requires_auth(self):
         client = build_client(FakeRuntime([PROFILE_A]))
         assert client.get("/api/chat/models").status_code == 401
+
+    def test_native_codex_models_publish_work_metadata_and_live_capabilities(self):
+        client = build_client(NativeAwareRuntime())
+        resp = client.get("/api/chat/models", headers=bearer(PROFILE_A))
+        assert resp.status_code == 200
+        payload = resp.json()
+        codex_group = next(group for group in payload["groups"] if group["provider_id"] == "openai-codex")
+        assert codex_group["native_runtime"] == "codex"
+        assert codex_group["models"] == [
+            {
+                "id": "chatgpt-plan/gpt-5.6-sol",
+                "label": "gpt-5.6-sol",
+                "source_model": "gpt-5.6-sol",
+                "native_runtime": "codex",
+                "experience": "work",
+            }
+        ]
+        assert payload["native_runtimes"][0]["available"] is True
+        assert payload["native_runtimes"][0]["workspaces"][0]["id"] == "server-work"
+
+    def test_codex_model_forces_work_and_forwards_named_workspace(self):
+        runtime = NativeAwareRuntime()
+        client = build_client(runtime)
+        resp = client.post(
+            "/api/chat/turn",
+            json={
+                "prompt": "fix it",
+                "model": "chatgpt-plan/gpt-5.6-sol",
+                "experience": "chat",
+                "workspace_id": "server-work",
+            },
+            headers=bearer(PROFILE_A),
+        )
+        assert resp.status_code == 200
+        assert runtime.experiences == [RuntimeExperience.WORK]
+        assert runtime.workspaces == ["server-work"]
 
     def test_empty_registry_lists_nothing_rather_than_a_fallback(self):
         """No routes must mean no options -- never a catalogue of unreachables."""

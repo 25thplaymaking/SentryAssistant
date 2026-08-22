@@ -113,6 +113,9 @@ class RuntimeTurn:
     #: tools away from existing integrations. New Sentry sessions choose Chat
     #: explicitly when that is the user's selected lane.
     experience: RuntimeExperience = RuntimeExperience.WORK
+    #: Named workstation workspace.  This is never a raw local path; the Node
+    #: resolves it against its own allowlisted registry.
+    workspace_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

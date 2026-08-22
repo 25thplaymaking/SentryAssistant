@@ -21,6 +21,7 @@ from .agent_runtime.endpoints import (
     register_persisted_endpoints,
 )
 from .agent_runtime.hermes import HermesInstance, HermesRuntime
+from .agent_runtime.routed import RoutedRuntime
 from .auth.tokens import TokenService
 from .config import Settings, get_settings
 from .cron.scheduler import CronScheduler, resolve_zone
@@ -55,7 +56,7 @@ def build_runtime(settings: Settings) -> AgentRuntime:
                     profile_name=settings.hermes_bootstrap_profile_name,
                 )
             )
-        return runtime
+        return RoutedRuntime(runtime)
     raise ValueError(f"Unknown runtime {settings.runtime_name!r}")
 
 
@@ -77,6 +78,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         # Startup must not crash-loop on a database blip; readiness reports it.
         app.state.pool = None
+
+    bind_pool = getattr(app.state.runtime, "bind_pool", None)
+    if bind_pool is not None:
+        bind_pool(app.state.pool)
 
     # Revocation is persisted, so rehydrate it. Without this a gateway restart
     # would silently un-revoke every device whose token had not yet expired.
@@ -236,4 +241,3 @@ async def runtime_info() -> dict[str, Any]:
         "healthy": capabilities.is_healthy,
         "degradedReason": capabilities.degraded_reason,
     }
-

@@ -6,7 +6,8 @@ param(
     [string]$NodeName = "Bryce's PC",
     [string]$TaskName = "Frontir Sentry Execution Node",
     [string]$RequiredSdkVersion = "10.0.301",
-    [string]$ClaudeExecutable = "$env:USERPROFILE\.local\bin\claude.exe"
+    [string]$ClaudeExecutable = "$env:USERPROFILE\.local\bin\claude.exe",
+    [string]$CodexExecutable = ""
 )
 
 Set-StrictMode -Version Latest
@@ -102,6 +103,25 @@ $claudePath = [IO.Path]::GetFullPath($ClaudeExecutable)
 if (-not (Test-Path -LiteralPath $claudePath -PathType Leaf)) {
     throw "Claude Code is not installed at the configured location."
 }
+$codexCandidate = $CodexExecutable
+if ([string]::IsNullOrWhiteSpace($codexCandidate)) {
+    # The Microsoft Store app-execution alias resolves inside WindowsApps but
+    # cannot be launched by a headless child process (Access denied). Resolve
+    # the npm package's real native executable so the node starts Codex
+    # directly, with no cmd.exe/npx wrapper and no visible console window.
+    $npmRoot = (& npm root -g).Trim()
+    $nativeCodexRoot = Join-Path $npmRoot "@openai\codex\node_modules\@openai\codex-win32-x64\vendor"
+    $nativeCodex = Get-ChildItem -LiteralPath $nativeCodexRoot -Recurse -File `
+        -Filter "codex.exe" -ErrorAction Stop | Select-Object -First 1
+    if ($null -eq $nativeCodex) {
+        throw "The native Codex executable was not found in the installed npm package."
+    }
+    $codexCandidate = $nativeCodex.FullName
+}
+$codexPath = [IO.Path]::GetFullPath($codexCandidate)
+if (-not (Test-Path -LiteralPath $codexPath -PathType Leaf)) {
+    throw "Codex is not installed for the current Windows user."
+}
 
 New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
 $stateRoot = Join-Path $installRoot "state"
@@ -145,12 +165,12 @@ $ownerUserId = Get-JwtSubject ([string]$tokens.access_token)
 $workspaceRegistration = @(
     @{
         workspace_id = "server-work"
-        allowed_harnesses = @("shell", "claude")
+        allowed_harnesses = @("shell", "claude", "codex")
         allowed_modes = @("readOnly", "workspaceWrite")
     },
     @{
         workspace_id = "enfusion"
-        allowed_harnesses = @("shell", "claude")
+        allowed_harnesses = @("shell", "claude", "codex")
         allowed_modes = @("readOnly", "workspaceWrite")
     }
 )
@@ -209,13 +229,13 @@ $config = [ordered]@{
         [ordered]@{
             workspaceId = "server-work"
             rootPath = $serverWork
-            allowedHarnesses = @("shell", "claude")
+            allowedHarnesses = @("shell", "claude", "codex")
             allowedModes = @("readOnly", "workspaceWrite")
         },
         [ordered]@{
             workspaceId = "enfusion"
             rootPath = $enfusion
-            allowedHarnesses = @("shell", "claude")
+            allowedHarnesses = @("shell", "claude", "codex")
             allowedModes = @("readOnly", "workspaceWrite")
         }
     )
@@ -223,6 +243,8 @@ $config = [ordered]@{
     credentialPath = $credentialPath
     logPath = $logPath
     claudeExecutable = $claudePath
+    codexExecutable = $codexPath
+    codexSessionPath = (Join-Path $stateRoot "codex-sessions.json")
     pollIntervalSeconds = 5
 }
 [IO.File]::WriteAllText(

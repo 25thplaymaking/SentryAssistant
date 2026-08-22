@@ -26,6 +26,8 @@ public class WorkOrderValidatorTests
         string harness = "codex",
         string mode = "readOnly",
         string? teamId = null,
+        string? runtimeSessionId = null,
+        string? runtimeModel = null,
         int lifetimeMinutes = 15,
         string? nonce = null)
     {
@@ -46,6 +48,8 @@ public class WorkOrderValidatorTests
             new("nonce", nonce ?? Guid.NewGuid().ToString("N"))
         };
         if (teamId is not null) claims.Add(new Claim("tid", teamId));
+        if (runtimeSessionId is not null) claims.Add(new Claim("rsid", runtimeSessionId));
+        if (runtimeModel is not null) claims.Add(new Claim("rmodel", runtimeModel));
 
         // notBefore is derived from expiry so a negative lifetime still produces a
         // structurally valid (but expired) token rather than failing construction.
@@ -68,6 +72,16 @@ public class WorkOrderValidatorTests
         Assert.Equal("wo-1", order.WorkOrderId);
         Assert.Equal("ws-sentry", order.WorkspaceId);
         Assert.Equal("codex", order.Harness);
+    }
+
+    [Fact]
+    public void PreservesSignedNativeRuntimeIdentity()
+    {
+        var order = new WorkOrderValidator(Key, Expectation()).Validate(Sign(
+            runtimeSessionId: "sentry-session-1",
+            runtimeModel: "gpt-5.6-sol"));
+        Assert.Equal("sentry-session-1", order.RuntimeSessionId);
+        Assert.Equal("gpt-5.6-sol", order.RuntimeModel);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Sentry.Node.Gateway;
 
 namespace Sentry.Node.Tests;
@@ -77,6 +78,60 @@ public class NodeConnectionTests
             () => connection.ClaimWorkAsync(TestContext.Current.CancellationToken));
         Assert.Equal(2, workCalls);
         Assert.Equal(1, refreshCalls);
+    }
+
+    [Fact]
+    public async Task NativeEventsUseTheExactWorkOrderEndpointAndPayload()
+    {
+        var workOrderId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        string? path = null;
+        string? body = null;
+        var handler = new Handler(async request =>
+        {
+            path = request.RequestUri!.PathAndQuery;
+            body = await request.Content!.ReadAsStringAsync();
+            return Json(HttpStatusCode.OK, "{\"accepted\":true}");
+        });
+        using var client = new HttpClient(handler);
+        using var connection = new NodeConnection("http://gateway.test", "node-token", client);
+
+        await connection.SubmitEventAsync(
+            workOrderId,
+            new RunEventRequest(
+                7,
+                "approval.required",
+                "Approve command",
+                JsonSerializer.SerializeToElement(new { request_id = "rpc-9" })),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal($"/api/nodes/work/{workOrderId}/events", path);
+        Assert.Contains("\"event_index\":7", body);
+        Assert.Contains("\"request_id\":\"rpc-9\"", body);
+    }
+
+    [Fact]
+    public async Task NativeResponsePollingEscapesTheExactRequestId()
+    {
+        var workOrderId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        string? path = null;
+        var handler = new Handler(request =>
+        {
+            path = request.RequestUri!.PathAndQuery;
+            return Task.FromResult(Json(HttpStatusCode.OK,
+                "{\"ready\":true,\"terminal\":false,\"response\":{\"decision\":\"once\"}}"));
+        });
+        using var client = new HttpClient(handler);
+        using var connection = new NodeConnection("http://gateway.test", "node-token", client);
+
+        var result = await connection.WaitForResponseAsync(
+            workOrderId,
+            "rpc id/9",
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.Ready);
+        Assert.Contains($"/api/nodes/work/{workOrderId}/response", path);
+        Assert.Contains("request_id=rpc%20id%2F9", path);
+        Assert.Contains("wait_seconds=20", path);
     }
 
     private static HttpResponseMessage Json(HttpStatusCode status, string body) => new(status)

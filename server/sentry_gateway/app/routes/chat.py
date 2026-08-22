@@ -10,7 +10,7 @@ profile's agent (that would run one person's work inside another's).
 from __future__ import annotations
 
 import json
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -45,13 +45,23 @@ class ChatTurnRequest(BaseModel):
     #: Work is the compatibility default for older clients; the Sentry UI sends
     #: its selected lane explicitly on every turn.
     experience: RuntimeExperience = RuntimeExperience.WORK
+    #: Named local workspace for a native workstation runtime.  It is an
+    #: allowlisted identifier, never a client-supplied filesystem path.
+    workspace_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class NativeRuntimeResponse(BaseModel):
+    work_order_id: UUID
+    request_id: str = Field(min_length=1, max_length=300)
+    response: dict = Field(default_factory=dict)
 
 
 _EXPERIENCES = {
     "default": RuntimeExperience.CHAT.value,
     "boundary_note": (
-        "Linked accounts provide models. Sentry and Hermes provide and govern "
-        "skills, plugins, memory, workspace, and workstation access."
+        "Most linked accounts provide models through Hermes. Choosing a linked "
+        "Codex subscription model activates the native Codex runtime on your "
+        "connected workstation."
     ),
     "items": [
         {
@@ -82,6 +92,7 @@ _EXPERIENCES = {
                 "Browser and computer control",
                 "Plugins, MCP, and workstation actions",
                 "Delegation and scheduled execution",
+                "Native Codex threads, skills, apps, approvals, and sandboxing when a Codex subscription model is selected",
             ],
             "blocked": [],
         },
@@ -139,11 +150,17 @@ async def _linked_model_groups(runtime, profile_id, models: tuple[str, ...]) -> 
             routed.append({"id": alias, "label": target, "source_model": target})
             claimed.add(alias)
         if routed:
+            native_runtime = str(provider.get("native_runtime") or "").strip() or None
+            if native_runtime:
+                for model in routed:
+                    model["native_runtime"] = native_runtime
+                    model["experience"] = RuntimeExperience.WORK.value
             groups.append(
                 {
                     "provider": str(provider.get("name") or provider.get("id") or "Provider"),
                     "provider_id": str(provider.get("id") or "provider"),
                     "models": routed,
+                    **({"native_runtime": native_runtime} if native_runtime else {}),
                 }
             )
 
@@ -292,10 +309,33 @@ async def list_models(request: Request, caller: Caller = Depends(require_caller)
             detail="No agent runtime is provisioned for this profile.",
         )
     models = tuple(models)
+    native_status = None
+    if hasattr(runtime, "native_runtime_status"):
+        try:
+            discovered = await runtime.native_runtime_status(caller.profile_id)
+            native_status = {
+                "id": "codex",
+                "available": bool(discovered.get("available")),
+                "reason": discovered.get("reason"),
+                "node_name": discovered.get("node_name"),
+                "version": discovered.get("version"),
+                "auth_mode": discovered.get("auth_mode"),
+                "features": list(discovered.get("features") or []),
+                "workspaces": list(discovered.get("workspaces") or []),
+            }
+        except Exception:
+            native_status = {
+                "id": "codex",
+                "available": False,
+                "reason": "Could not read the workstation's Codex capabilities.",
+                "workspaces": [],
+                "features": [],
+            }
     return {
         "models": list(models),
         "groups": await _linked_model_groups(runtime, caller.profile_id, models),
         "experiences": _EXPERIENCES,
+        "native_runtimes": [native_status] if native_status is not None else [],
     }
 
 
@@ -406,6 +446,11 @@ async def chat_turn(
                 detail="Could not record this turn for audit; refused.",
             ) from exc
 
+    effective_experience = body.experience
+    if hasattr(runtime, "experience_for_model"):
+        effective_experience = runtime.experience_for_model(
+            chosen_model, effective_experience
+        )
     turn = RuntimeTurn(
         session_id=session_id,
         profile_id=caller.profile_id,
@@ -413,7 +458,8 @@ async def chat_turn(
         correlation_id=correlation_id,
         quoted_context=tuple(body.quoted_context),
         model=chosen_model,
-        experience=body.experience,
+        experience=effective_experience,
+        workspace_id=body.workspace_id,
     )
 
     # Recording lives here, not in the runtime adapter: this is where the pool
@@ -433,6 +479,91 @@ async def chat_turn(
         media_type="text/event-stream",
         headers={"X-Sentry-Correlation-Id": correlation_id},
     )
+
+
+@router.post("/native/respond")
+async def respond_to_native_runtime(
+    body: NativeRuntimeResponse,
+    request: Request,
+    caller: Caller = Depends(require_caller),
+) -> dict:
+    """Answer one exact App Server request for this profile's live work order."""
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Native runtime response storage is unavailable.",
+        )
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT w.id, w.state, w.correlation_id
+                FROM work_orders w
+                WHERE w.id = $1 AND w.profile_id = $2 AND w.harness = 'codex'
+                  AND EXISTS (
+                      SELECT 1 FROM work_order_events e
+                      WHERE e.work_order_id = w.id
+                        AND e.payload->>'request_id' = $3
+                  )
+                FOR UPDATE OF w
+                """,
+                body.work_order_id,
+                caller.profile_id,
+                body.request_id,
+            )
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Native Codex request not found.",
+                )
+            if row["state"] != "inProgress":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This Codex request is no longer waiting for a response.",
+                )
+            existing = await conn.fetchrow(
+                """
+                SELECT response FROM work_order_responses
+                WHERE work_order_id = $1 AND request_id = $2
+                """,
+                body.work_order_id,
+                body.request_id,
+            )
+            if existing is not None:
+                if dict(existing["response"] or {}) == body.response:
+                    return {"ok": True, "already_answered": True}
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This Codex request was already answered.",
+                )
+            await conn.execute(
+                """
+                INSERT INTO work_order_responses
+                    (work_order_id, request_id, response, responded_by)
+                VALUES ($1,$2,$3,$4)
+                """,
+                body.work_order_id,
+                body.request_id,
+                body.response,
+                caller.user_id,
+            )
+            audit = AuditService(pool)
+            await audit.record_with(
+                conn,
+                AuditEvent(
+                    action="codex.native.respond",
+                    decision=Decision.ALLOWED,
+                    correlation_id=row["correlation_id"],
+                    actor_user_id=caller.user_id,
+                    actor_device_id=caller.device_id,
+                    profile_id=caller.profile_id,
+                    target_kind="workorder",
+                    target_id=str(body.work_order_id),
+                    detail="answered a native Codex approval or input request",
+                ),
+            )
+    return {"ok": True}
 
 
 def _audit_service(request: Request) -> AuditService | None:

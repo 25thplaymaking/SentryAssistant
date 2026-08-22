@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Sentry.Node.Gateway;
 using Sentry.Node.Harnesses;
 using Sentry.Node.Security;
@@ -13,6 +14,7 @@ public sealed record NodeWorkerOptions(
     NodeExpectation Expectation,
     WorkspaceRegistry Workspaces,
     IReadOnlyDictionary<string, IHarnessAdapter> Harnesses,
+    IReadOnlyDictionary<string, NativeRuntimeRegistration> NativeRuntimes,
     TimeSpan PollInterval);
 
 /// <summary>
@@ -93,7 +95,8 @@ public sealed class NodeWorker
             try
             {
                 var response = await connection.RegisterAsync(
-                    new NodeRegistrationRequest(_options.NodeName, workspaces), cancellationToken);
+                    new NodeRegistrationRequest(
+                        _options.NodeName, workspaces, _options.NativeRuntimes), cancellationToken);
                 if (response is null || !string.Equals(
                         response.NodeId.ToString(),
                         _options.Expectation.NodeId,
@@ -133,6 +136,53 @@ public sealed class NodeWorker
             if (!_options.Harnesses.TryGetValue(validated.Harness, out var harness))
             {
                 result = Refusal($"Harness '{validated.Harness}' is not available on this node.");
+            }
+            else if (harness is IInteractiveHarnessAdapter interactive)
+            {
+                if (string.IsNullOrWhiteSpace(validated.RuntimeSessionId)
+                    || string.IsNullOrWhiteSpace(validated.RuntimeModel)
+                    || !string.Equals(
+                        dispatch.RuntimeSessionId,
+                        validated.RuntimeSessionId,
+                        StringComparison.Ordinal)
+                    || !string.Equals(
+                        dispatch.RuntimeModel,
+                        validated.RuntimeModel,
+                        StringComparison.Ordinal))
+                {
+                    result = Refusal("Native runtime dispatch metadata did not match its signed work order.");
+                }
+                else
+                {
+                    _log($"running native {validated.Harness} on {validated.WorkspaceId} ({validated.Mode})");
+                    var bridge = new GatewayInteractiveBridge(
+                        connection, dispatch.WorkOrderId, progress =>
+                            _log($"  {progress.Type}: {Trim(progress.Summary)}"));
+                    using var runCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                        cancellationToken);
+                    var monitor = MonitorNativeCancellationAsync(
+                        connection, dispatch.WorkOrderId, runCancellation);
+                    HarnessResult run;
+                    try
+                    {
+                        run = await interactive.ExecuteInteractiveAsync(
+                            dispatch.Prompt,
+                            validated.Mode,
+                            workspace,
+                            validated.RuntimeSessionId,
+                            validated.RuntimeModel,
+                            bridge,
+                            runCancellation.Token);
+                    }
+                    finally
+                    {
+                        runCancellation.Cancel();
+                        try { await monitor; }
+                        catch (OperationCanceledException) { }
+                    }
+                    result = new RunResultRequest(
+                        run.Outcome, DurableSummary(run), run.StatusBoundary, run.Evidence);
+                }
             }
             else
             {
@@ -176,6 +226,37 @@ public sealed class NodeWorker
         }
     }
 
+    private async Task MonitorNativeCancellationAsync(
+        NodeConnection connection,
+        Guid workOrderId,
+        CancellationTokenSource runCancellation)
+    {
+        try
+        {
+            while (!runCancellation.IsCancellationRequested)
+            {
+                var state = await connection.WaitForResponseAsync(
+                    workOrderId, "__sentry_control__", runCancellation.Token);
+                if (state.Terminal)
+                {
+                    _log($"stopping native run {workOrderId} after Sentry closed it");
+                    runCancellation.Cancel();
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (runCancellation.IsCancellationRequested)
+        {
+            // Normal completion or workstation shutdown.
+        }
+        catch (Exception exception)
+        {
+            // The native event/result path still reports the connectivity
+            // failure.  This observer must never invent a cancellation.
+            _log($"native cancellation monitor unavailable ({exception.GetType().Name})");
+        }
+    }
+
     private static RunResultRequest Refusal(string reason) =>
         new("failed", reason, "implemented",
             new Dictionary<string, object> { ["refused"] = true, ["reason"] = reason });
@@ -202,5 +283,51 @@ public sealed class NodeWorker
 
         var summary = string.Join("\n\n", parts);
         return summary.Length <= 4000 ? summary : summary[..3990] + "\n... truncated";
+    }
+
+    private sealed class GatewayInteractiveBridge : IInteractiveHarnessBridge
+    {
+        private readonly NodeConnection _connection;
+        private readonly Guid _workOrderId;
+        private readonly Action<HarnessProgress> _log;
+        private int _eventIndex;
+
+        public GatewayInteractiveBridge(
+            NodeConnection connection,
+            Guid workOrderId,
+            Action<HarnessProgress> log)
+        {
+            _connection = connection;
+            _workOrderId = workOrderId;
+            _log = log;
+        }
+
+        public async Task ReportAsync(
+            HarnessProgress progress, CancellationToken cancellationToken)
+        {
+            _log(progress);
+            var index = Interlocked.Increment(ref _eventIndex);
+            var payload = progress.Payload
+                ?? JsonSerializer.SerializeToElement(new Dictionary<string, object>());
+            await _connection.SubmitEventAsync(
+                _workOrderId,
+                new RunEventRequest(index, progress.Type, progress.Summary, payload),
+                cancellationToken);
+        }
+
+        public async Task<JsonElement?> WaitForResponseAsync(
+            string requestId, CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var response = await _connection.WaitForResponseAsync(
+                    _workOrderId, requestId, cancellationToken);
+                if (response.Ready && response.Response is JsonElement value)
+                    return value.Clone();
+                if (response.Terminal)
+                    return null;
+            }
+            return null;
+        }
     }
 }

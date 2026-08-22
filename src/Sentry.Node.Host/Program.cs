@@ -107,6 +107,22 @@ var harnesses = new Dictionary<string, IHarnessAdapter>(StringComparer.OrdinalIg
         config.ClaudeExecutable,
         Path.Combine(AppContext.BaseDirectory, "claude-automation-settings.json"))
 };
+var nativeRuntimes = new Dictionary<string, Sentry.Node.Gateway.NativeRuntimeRegistration>(
+    StringComparer.OrdinalIgnoreCase);
+if (!string.IsNullOrWhiteSpace(config.CodexExecutable)
+    && File.Exists(config.CodexExecutable))
+{
+    var codexStatePath = ResolvePath(
+        config.CodexSessionPath, configDirectory, "codex-sessions.json");
+    var codex = new CodexAppServerAdapter(config.CodexExecutable, codexStatePath);
+    var probe = await CodexAppServerAdapter.ProbeAsync(
+        config.CodexExecutable, CancellationToken.None);
+    nativeRuntimes["codex"] = probe;
+    if (probe.Available)
+        harnesses["codex"] = codex;
+    else
+        Console.WriteLine($"native Codex unavailable: {probe.Reason}");
+}
 
 var expectation = new NodeExpectation(
     NodeId: config.NodeId,
@@ -131,6 +147,7 @@ var worker = new NodeWorker(new NodeWorkerOptions(
     Expectation: expectation,
     Workspaces: registry,
     Harnesses: harnesses,
+    NativeRuntimes: nativeRuntimes,
     PollInterval: TimeSpan.FromSeconds(config.PollIntervalSeconds)));
 
 Console.WriteLine($"Sentry node '{config.NodeName}' -> {config.GatewayUrl}");
@@ -162,4 +179,6 @@ internal sealed record NodeConfig(
     string? CredentialPath = null,
     string? LogPath = null,
     string ClaudeExecutable = "claude",
+    string? CodexExecutable = null,
+    string? CodexSessionPath = null,
     int PollIntervalSeconds = 5);

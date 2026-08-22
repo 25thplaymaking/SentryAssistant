@@ -13,7 +13,9 @@ public sealed record DispatchedWorkOrder(
     [property: JsonPropertyName("workspace_id")] string WorkspaceId,
     [property: JsonPropertyName("harness")] string Harness,
     [property: JsonPropertyName("mode")] string Mode,
-    [property: JsonPropertyName("correlation_id")] string CorrelationId);
+    [property: JsonPropertyName("correlation_id")] string CorrelationId,
+    [property: JsonPropertyName("runtime_session_id")] string? RuntimeSessionId = null,
+    [property: JsonPropertyName("runtime_model")] string? RuntimeModel = null);
 
 public sealed record WorkspaceRegistrationRequest(
     [property: JsonPropertyName("workspace_id")] string WorkspaceId,
@@ -22,7 +24,16 @@ public sealed record WorkspaceRegistrationRequest(
 
 public sealed record NodeRegistrationRequest(
     [property: JsonPropertyName("name")] string Name,
-    [property: JsonPropertyName("workspaces")] IReadOnlyList<WorkspaceRegistrationRequest> Workspaces);
+    [property: JsonPropertyName("workspaces")] IReadOnlyList<WorkspaceRegistrationRequest> Workspaces,
+    [property: JsonPropertyName("native_runtimes")] IReadOnlyDictionary<string, NativeRuntimeRegistration>? NativeRuntimes = null);
+
+public sealed record NativeRuntimeRegistration(
+    [property: JsonPropertyName("available")] bool Available,
+    [property: JsonPropertyName("version")] string? Version,
+    [property: JsonPropertyName("auth_mode")] string? AuthMode,
+    [property: JsonPropertyName("models")] IReadOnlyList<string> Models,
+    [property: JsonPropertyName("features")] IReadOnlyList<string> Features,
+    [property: JsonPropertyName("reason")] string? Reason = null);
 
 public sealed record NodeRegistrationResponse(
     [property: JsonPropertyName("node_id")] Guid NodeId,
@@ -34,6 +45,17 @@ public sealed record RunResultRequest(
     [property: JsonPropertyName("summary")] string Summary,
     [property: JsonPropertyName("status_boundary")] string StatusBoundary,
     [property: JsonPropertyName("evidence")] IReadOnlyDictionary<string, object> Evidence);
+
+public sealed record RunEventRequest(
+    [property: JsonPropertyName("event_index")] int EventIndex,
+    [property: JsonPropertyName("event_type")] string EventType,
+    [property: JsonPropertyName("summary")] string Summary,
+    [property: JsonPropertyName("payload")] JsonElement Payload);
+
+public sealed record RunResponseEnvelope(
+    [property: JsonPropertyName("ready")] bool Ready,
+    [property: JsonPropertyName("terminal")] bool Terminal,
+    [property: JsonPropertyName("response")] JsonElement? Response);
 
 public sealed record NodeTokenPair(
     [property: JsonPropertyName("access_token")] string AccessToken,
@@ -184,6 +206,32 @@ public sealed class NodeConnection : IDisposable
             },
             cancellationToken);
         response.EnsureSuccessStatusCode();
+    }
+
+    public async Task SubmitEventAsync(
+        Guid workOrderId, RunEventRequest runEvent, CancellationToken cancellationToken)
+    {
+        using var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Post, $"api/nodes/work/{workOrderId}/events")
+            {
+                Content = JsonContent.Create(runEvent, options: Json)
+            },
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<RunResponseEnvelope> WaitForResponseAsync(
+        Guid workOrderId,
+        string requestId,
+        CancellationToken cancellationToken)
+    {
+        var path = $"api/nodes/work/{workOrderId}/response?request_id={Uri.EscapeDataString(requestId)}&wait_seconds=20";
+        using var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Get, path),
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<RunResponseEnvelope>(Json, cancellationToken)
+            ?? new RunResponseEnvelope(false, false, null);
     }
 
     private async Task<HttpResponseMessage> SendAsync(
