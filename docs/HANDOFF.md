@@ -27,6 +27,17 @@ evidence.
 - The desktop shell binds IPv6 loopback forwards (IPv4 loopback is broken on
   Bryce's machine): WebUI `[::1]:8787`, Gateway `[::1]:8090`, Server Control
   `[::1]:17443`.
+- Provider connection is an in-app flow. Nous, OpenAI Codex, xAI, and MiniMax
+  use browser/device OAuth through Gateway → Hermes; Anthropic uses its
+  browser-plus-paste callback. The browser never receives provider tokens or
+  raw CLI output. Qwen OAuth is retired and shown unavailable.
+- Bryce's Windows execution node polls Gateway outbound through `[::1]:8090`.
+  It exposes only named `server-work` and `enfusion` roots to the existing
+  signed work-order store; no local path is stored by Gateway and no inbound
+  port exists. The hidden, limited scheduled task is `Frontir Sentry Execution
+  Node`; credentials are current-user DPAPI protected under local app data.
+  Hermes receives fixed `workstation_status`, `workstation_run`, and
+  `workstation_result` tools from the existing Server Control MCP bridge.
 
 ## What the 2026-08-21 finalization changed
 
@@ -68,6 +79,14 @@ interactive Nous catalogue is mirrored into the owner seed, teammate seed,
 and live owner profile (0d1278f). The live pre-catalogue config is retained at
 `data/hermes/personal/config.yaml.pre-nous-catalog-20260821` for rollback.
 
+**Provider and workstation continuation completed.** Provider OAuth is deployed
+at SentryAssistant `366460f` / SentryWebUI `1b94347e`. The workstation bridge
+and persistent Windows node are deployed at `dc04616`, with profile binding
+fixed at `fb5f341`. `SENTRY_WORKSTATION_PROFILE_ID` in the live Compose env is
+the enrolled Bryce personal profile; keep it separate from the historical
+`SENTRY_BOOTSTRAP_PROFILE_ID`. The installer maintains that binding
+automatically on a future reinstall.
+
 ## Verification (2026-08-21)
 
 - Gateway suite: **515 passed** at eb50e5d. Live re-verification rejected an
@@ -88,6 +107,13 @@ and live owner profile (0d1278f). The live pre-catalogue config is retained at
   Hermes and Gateway each advertise 280 unique picker entries (278 catalogue
   models, the friendly alias, and `hermes-agent`), with batch and embedding
   entries absent.
+- Continuation: Gateway **531 passed**; Windows node **103 total, 101 passed and
+  two opt-in smoke tests skipped**. A live OpenAI Codex device flow started and
+  cancelled with zero orphan processes. DeepSeek `deepseek-v4-flash` called the
+  workstation tools itself and completed read-only work order
+  `ce5585de-1526-4ae5-b506-3653e95e864c` with `true`. The scheduled worker
+  survived a restart, has one outbound loopback Gateway connection, and has no
+  listening socket.
 
 ## Deploy loop (corrected)
 
@@ -98,7 +124,8 @@ after a push to origin. Push to origin from a workstation, then on grain:
 ```bash
 cd /srv/sentry/webui && git pull --ff-only && git push github frontir
 cd /srv/sentry/repo  && git pull --ff-only && git push github 25vid/sentry-foundation
-cd deploy/linux && docker compose build gateway webui && docker compose up -d gateway webui
+cd deploy/linux && docker compose build gateway hermes server-control-mcp webui
+docker compose up -d gateway server-control-mcp hermes webui
 ```
 
 **Unattended operation (enabled 2026-08-21):** `sentry-update.service` runs at

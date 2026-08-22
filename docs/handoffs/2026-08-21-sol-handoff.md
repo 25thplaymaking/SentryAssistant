@@ -48,8 +48,8 @@ the selection.
 
 ### End-user rollout — complete
 
-- The final runtime feature heads are SentryAssistant `f869979` and SentryWebUI
-  `38da7f4e` (followed only by this documentation record in SentryAssistant).
+- The final runtime feature heads are SentryAssistant `fb5f341` and SentryWebUI
+  `1b94347e` (followed only by this documentation record in SentryAssistant).
   Both are present in the server bare repositories, live checkouts, and GitHub
   mirrors.
 - Existing owner runtime configuration and both provisioning seeds expose the
@@ -60,13 +60,59 @@ the selection.
 - WebUI `38da7f4e` closes the hosted browser-update gap: Compose builds now
   derive a deterministic source version when no release tag is supplied. The
   public service worker is live with cache key
-  `hermes-shell-source-4839c724ae33ef3d`, versioned asset URLs, and
+  `hermes-shell-source-37528cc811798a79`, versioned asset URLs, and
   `Cache-Control: no-store`, so existing installed/browser clients discover the
   new bundle rather than remaining on `hermes-shell-unknown`.
 - Final live verification: all six services are running; Gateway, Hermes,
   Postgres, server-control, and WebUI are healthy; public `/sw.js` returns 200;
   the WebUI PWA regression suite is 47/47. The pre-existing `stress` runtime is
   an isolated test profile and is not an end-user profile.
+
+### Provider connection and workstation continuation — complete
+
+The two follow-up requests that arrived after the original ledger are also
+deployed, mirrored to GitHub, and live for end users.
+
+- SentryAssistant `366460f` and SentryWebUI `1b94347e` replace the Agent panel's
+  server chores with in-app provider connection flows. Nous, OpenAI Codex, xAI,
+  and MiniMax use device/browser OAuth; Anthropic retains its browser-plus-paste
+  flow. The browser receives only the public URL/code and status. OAuth tokens,
+  CLI output, and child processes stay inside Hermes. Cancel reaps the process,
+  and repeated Connect cancels the prior flow. Qwen is shown as retired rather
+  than offering its discontinued OAuth command.
+- The hosted JS bundle now contains the OAuth start/poll/cancel flow and contains
+  neither `Sign in on the server` nor `hermes auth add`. A live OpenAI Codex
+  device flow reached `auth.openai.com`, returned a public user code, cancelled,
+  and left zero OAuth child processes. No credential or code was printed during
+  verification.
+- SentryAssistant `dc04616` adds a single outbound Windows execution node to the
+  existing signed work-order store. `fb5f341` binds the bridge to the profile
+  actually returned by enrollment instead of the deployment's historical
+  runtime bootstrap UUID. There is no inbound listener, second queue, arbitrary
+  path, or general shell.
+- Bryce's machine is installed at the current-user local app-data boundary as a
+  hidden, limited scheduled task named `Frontir Sentry Execution Node`. Its
+  rotating access/refresh credentials and work-order signing key are protected
+  with Windows DPAPI. It starts at logon, restarts after failure, and survived a
+  manual stop/start with the same node identity.
+- Only `server-work` and `enfusion` are exposed. Each advertises `shell` and
+  `claude`, with `readOnly` and bounded `workspaceWrite`; read-only is the chat
+  default and write mode is only for an explicit file-change request. Local
+  paths never leave the node. Elevated work, credential access, deletion,
+  network shell, git push/reset/clean, and arbitrary process control remain
+  unavailable.
+- Live DeepSeek verification used model `deepseek-v4-flash`. The model called
+  `workstation_status`, then dispatched a read-only `git rev-parse
+  --is-inside-work-tree` work order through `workstation_run`. Work order
+  `ce5585de-1526-4ae5-b506-3653e95e864c` reached `readyForReview`, returned
+  `true`, and was reported as succeeded. The node has one established IPv6
+  loopback connection to Gateway port 8090 and zero listening sockets.
+- Verification totals for this continuation: Gateway **531 passed**; execution
+  node **103 total, 101 passed and 2 opt-in smoke tests skipped**; focused
+  provider bridge **33 passed**; focused WebUI OAuth/model surfaces **63 passed**
+  locally and **24 passed** on grain. Compose validation and self-contained
+  Windows publishing passed. All six production services are running; Gateway,
+  Hermes, WebUI, Postgres, and Server Control are healthy.
 
 ---
 
@@ -75,9 +121,9 @@ the selection.
 - **Live and healthy on grain** (`bishop@205.209.116.114`): gateway, webui,
   hermes (with healthcheck), postgres, cloudflared, server-control-mcp. Public
   edge `https://sentry.frontir.solutions` serves the current bundle.
-- **Deployed feature heads**: SentryAssistant `f869979` (branch
+- **Deployed feature heads**: SentryAssistant `fb5f341` (branch
   `25vid/sentry-foundation`, followed only by this documentation update),
-  SentryWebUI `38da7f4e` (branch `frontir`) — mirrored across the local clone,
+  SentryWebUI `1b94347e` (branch `frontir`) — mirrored across the local clone,
   `/srv/git/*` bare repos, `/srv/sentry/*` checkouts, and GitHub.
 - **Test state**: the final application-code suite on grain completed with
   **14993 passed, 268 skips, 2 xfailed, 1 xpassed, 0 failed, 0 errors**. The
