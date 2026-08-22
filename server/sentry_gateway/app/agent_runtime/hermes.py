@@ -25,6 +25,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID
 
 import httpx
@@ -674,8 +675,7 @@ class HermesRuntime(AgentRuntime):
                 body = response.json()
             except ValueError:
                 raise AdminSurfaceUnavailable(
-                    "This agent runtime has no Sentry admin surface. Rebuild the "
-                    "Hermes image so patches/api_server_admin_surface.py is applied.",
+                    "Sentry is still enabling this agent feature. Try again shortly.",
                     status_code=501,
                 ) from None
             raise AdminSurfaceUnavailable(_admin_error_message(body), status_code=404)
@@ -687,8 +687,7 @@ class HermesRuntime(AgentRuntime):
                 body = None
             if body is None:
                 raise AdminSurfaceUnavailable(
-                    "This agent runtime has no Sentry admin surface. Rebuild the "
-                    "Hermes image so patches/api_server_admin_surface.py is applied.",
+                    "Sentry is still enabling this agent feature. Try again shortly.",
                     status_code=501,
                 )
             raise AdminSurfaceUnavailable(
@@ -734,6 +733,18 @@ class HermesRuntime(AgentRuntime):
             body["label"] = label
         return await self._admin_request(
             profile_id, "POST", "/v1/auth/oauth/complete", json_body=body
+        )
+
+    async def oauth_status(self, profile_id: UUID, flow_id: str) -> dict:
+        """Return browser-safe progress for a provider login flow."""
+        return await self._admin_request(
+            profile_id, "GET", f"/v1/auth/oauth/{quote(flow_id, safe='')}"
+        )
+
+    async def cancel_oauth(self, profile_id: UUID, flow_id: str) -> dict:
+        """Cancel a provider login and reap its background poller."""
+        return await self._admin_request(
+            profile_id, "DELETE", f"/v1/auth/oauth/{quote(flow_id, safe='')}"
         )
 
     async def logout_provider(

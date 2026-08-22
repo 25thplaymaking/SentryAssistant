@@ -199,6 +199,30 @@ async def complete_oauth(
     return await _call(fn(caller.profile_id, body.flow_id, body.code, body.label))
 
 
+@router.get("/auth/oauth/{flow_id}")
+async def oauth_status(
+    flow_id: str,
+    request: Request,
+    caller: Caller = Depends(require_caller),
+) -> dict:
+    """Read browser-safe progress for a fixed provider login flow."""
+    runtime = _runtime(request)
+    fn = _bound(runtime, "oauth_status")
+    return await _call(fn(caller.profile_id, flow_id))
+
+
+@router.delete("/auth/oauth/{flow_id}")
+async def cancel_oauth(
+    flow_id: str,
+    request: Request,
+    caller: Caller = Depends(require_caller),
+) -> dict:
+    """Cancel an in-flight provider login and stop its background poller."""
+    runtime = _runtime(request)
+    fn = _bound(runtime, "cancel_oauth")
+    return await _call(fn(caller.profile_id, flow_id))
+
+
 @router.delete("/auth/providers/{provider}")
 async def logout_provider(
     provider: str,

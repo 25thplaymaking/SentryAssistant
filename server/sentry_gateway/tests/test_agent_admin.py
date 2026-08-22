@@ -68,6 +68,16 @@ class FakeRuntime:
         self.calls.append(("complete", profile_id, flow_id, code, label))
         return {"provider": "anthropic", "credential": {"id": "abc123"}}
 
+    async def oauth_status(self, profile_id, flow_id):
+        self._guard(profile_id)
+        self.calls.append(("oauth_status", profile_id, flow_id))
+        return {"flow_id": flow_id, "status": "awaiting_user"}
+
+    async def cancel_oauth(self, profile_id, flow_id):
+        self._guard(profile_id)
+        self.calls.append(("oauth_cancel", profile_id, flow_id))
+        return {"flow_id": flow_id, "status": "cancelled"}
+
     async def logout_provider(self, profile_id, provider, credential=None):
         self._guard(profile_id)
         self.calls.append(("logout", profile_id, provider, credential))
@@ -224,6 +234,28 @@ class TestOAuthFlow:
         )
         assert resp.status_code == 422
         assert runtime.calls == []
+
+    def test_status_is_scoped_to_the_callers_profile(self):
+        runtime = FakeRuntime()
+        client = build_client(runtime)
+        resp = client.get(
+            "/api/agent/auth/oauth/f1",
+            headers=bearer(PROFILE_A),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "awaiting_user"
+        assert runtime.calls == [("oauth_status", PROFILE_A, "f1")]
+
+    def test_cancel_is_scoped_to_the_callers_profile(self):
+        runtime = FakeRuntime()
+        client = build_client(runtime)
+        resp = client.delete(
+            "/api/agent/auth/oauth/f1",
+            headers=bearer(PROFILE_A),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "cancelled"
+        assert runtime.calls == [("oauth_cancel", PROFILE_A, "f1")]
 
     def test_logout_passes_optional_credential_selector(self):
         runtime = FakeRuntime()

@@ -32,7 +32,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import re
 import secrets
+import shutil
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -63,12 +66,30 @@ def _sweep_flows(now: Optional[float] = None) -> None:
     now = time.time() if now is None else now
     for flow_id, flow in list(_flows.items()):
         if now - float(flow.get("created_at", 0)) > _FLOW_TTL_SECONDS:
+            task = flow.get("task")
+            if task is not None and not task.done():
+                task.cancel()
+            process = flow.get("process")
+            if process is not None and process.returncode is None:
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
             _flows.pop(flow_id, None)
     # Bound memory even if every flow is young: an authenticated caller can
     # still start flows in a loop.
     while len(_flows) > _MAX_FLOWS:
         oldest = min(_flows, key=lambda k: _flows[k].get("created_at", 0))
-        _flows.pop(oldest, None)
+        flow = _flows.pop(oldest, None) or {}
+        task = flow.get("task")
+        if task is not None and not task.done():
+            task.cancel()
+        process = flow.get("process")
+        if process is not None and process.returncode is None:
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +215,217 @@ def _pool_status(provider: str) -> Dict[str, Any]:
     return {"authenticated": bool(creds), "credentials": creds}
 
 
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+_HTTPS_URL_RE = re.compile(r"https://[^\s]+")
+_USER_CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]{3,}$", re.IGNORECASE)
+
+
+def _public_oauth_flow(flow_id: str, flow: Dict[str, Any]) -> Dict[str, Any]:
+    """Browser-safe projection of an in-flight OAuth flow.
+
+    Process objects, tasks, CLI output, PKCE verifiers, and tokens stay inside
+    Hermes. The browser receives only what a person needs to authorize the
+    fixed provider login plus credential identity after success.
+    """
+    return {
+        "flow_id": flow_id,
+        "flow_kind": flow.get("kind", "paste"),
+        "provider": flow.get("provider"),
+        "status": flow.get("status", "pending"),
+        "authorize_url": flow.get("authorize_url"),
+        "user_code": flow.get("user_code"),
+        "expires_in": _FLOW_TTL_SECONDS,
+        "poll_interval_seconds": 3,
+        "instructions": flow.get("instructions"),
+        "error": flow.get("error"),
+        "credential": flow.get("credential"),
+    }
+
+
+def _clean_cli_line(raw: str) -> str:
+    return _ANSI_ESCAPE_RE.sub("", raw or "").strip()
+
+
+def _remember_verification(flow: Dict[str, Any], line: str) -> None:
+    """Extract the public URL/code from the pinned Hermes CLI's safe prose."""
+    lowered = line.lower()
+    urls = _HTTPS_URL_RE.findall(line)
+    if urls:
+        flow["authorize_url"] = urls[-1].rstrip(".,)")
+        # xAI and MiniMax include the code in the URL as well as the next line.
+        from urllib.parse import parse_qs, urlparse
+
+        query_code = (parse_qs(urlparse(flow["authorize_url"]).query).get("user_code") or [""])[0]
+        if query_code:
+            flow["user_code"] = query_code
+
+    if "enter this code" in lowered:
+        flow["expect_code"] = True
+        inline = line.split(":", 1)[1].strip() if ":" in line else ""
+        if _USER_CODE_RE.fullmatch(inline):
+            flow["user_code"] = inline
+            flow["expect_code"] = False
+    elif "enter code:" in lowered:
+        inline = line.rsplit(":", 1)[-1].strip()
+        if _USER_CODE_RE.fullmatch(inline):
+            flow["user_code"] = inline
+            flow["expect_code"] = False
+    elif flow.get("expect_code") and _USER_CODE_RE.fullmatch(line):
+        flow["user_code"] = line
+        flow["expect_code"] = False
+
+    if flow.get("authorize_url") and flow.get("user_code"):
+        flow["status"] = "awaiting_user"
+        flow["instructions"] = (
+            "Open the authorization page on this device and enter the code. "
+            "Sentry will detect completion automatically."
+        )
+        ready = flow.get("ready")
+        if ready is not None:
+            ready.set()
+
+
+async def _stop_oauth_process(flow: Dict[str, Any]) -> None:
+    process = flow.get("process")
+    if process is None or process.returncode is not None:
+        return
+    try:
+        process.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(process.wait(), timeout=3)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
+
+
+async def _run_device_oauth(flow_id: str) -> None:
+    """Run one fixed Hermes provider login without exposing a terminal.
+
+    This deliberately invokes the installed, pinned Hermes CLI rather than
+    copying four providers' OAuth protocols into Sentry. Provider is validated
+    against a closed set and every subprocess argument is passed separately;
+    no shell, free-form command, or browser-supplied argument exists here.
+    """
+    flow = _flows[flow_id]
+    provider = str(flow["provider"])
+    executable = shutil.which("hermes")
+    if not executable:
+        flow.update(status="error", error="The agent login service is unavailable.")
+        flow["ready"].set()
+        return
+
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    process = None
+    try:
+        process = await asyncio.create_subprocess_exec(
+            executable,
+            "auth",
+            "add",
+            provider,
+            "--type",
+            "oauth",
+            "--no-browser",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=env,
+        )
+        flow["process"] = process
+        assert process.stdout is not None
+        while True:
+            raw = await process.stdout.readline()
+            if not raw:
+                break
+            line = _clean_cli_line(raw.decode("utf-8", errors="replace"))
+            if not line:
+                continue
+            _remember_verification(flow, line)
+
+        return_code = await process.wait()
+        if flow.get("status") == "cancelled":
+            return
+        status = _pool_status(provider)
+        if return_code == 0 and status.get("authenticated"):
+            credentials = status.get("credentials") or []
+            credential = credentials[-1] if credentials else {}
+            flow.update(
+                status="success",
+                credential={
+                    "id": credential.get("id"),
+                    "label": credential.get("label"),
+                    "auth_type": credential.get("auth_type"),
+                },
+                error=None,
+            )
+        else:
+            # CLI output is intentionally never reflected into the browser: a
+            # provider may include sensitive diagnostics in it. The public
+            # flow gets a stable, actionable message instead.
+            flow.update(
+                status="error",
+                error=(
+                    "Sign-in was not completed. The authorization may have "
+                    "expired or been declined. Start a new sign-in and try again."
+                ),
+            )
+    except asyncio.CancelledError:
+        flow["status"] = "cancelled"
+        await _stop_oauth_process(flow)
+        raise
+    except Exception as exc:  # noqa: BLE001 — surfaced as a bounded user error
+        logger.warning("Device OAuth flow failed for %s: %s", provider, exc)
+        flow.update(
+            status="error",
+            error="The secure sign-in service could not be started. Try again shortly.",
+        )
+        await _stop_oauth_process(flow)
+    finally:
+        flow["process"] = process
+        flow["ready"].set()
+
+
+async def _start_device_oauth(provider: str) -> Dict[str, Any]:
+    _sweep_flows()
+    flow_id = uuid.uuid4().hex
+    flow: Dict[str, Any] = {
+        "kind": "device",
+        "provider": provider,
+        "status": "starting",
+        "created_at": time.time(),
+        "ready": asyncio.Event(),
+        "instructions": "Preparing a secure authorization code…",
+    }
+    _flows[flow_id] = flow
+    flow["task"] = asyncio.create_task(_run_device_oauth(flow_id))
+    try:
+        await asyncio.wait_for(flow["ready"].wait(), timeout=8)
+    except asyncio.TimeoutError:
+        # Rate limiting can make initial code creation slow. Return a live flow
+        # instead of blocking the HTTP request; the browser will keep polling.
+        pass
+    return _public_oauth_flow(flow_id, flow)
+
+
+async def _cancel_oauth_flow(flow_id: str) -> Optional[Dict[str, Any]]:
+    _sweep_flows()
+    flow = _flows.get(flow_id)
+    if flow is None:
+        return None
+    flow["status"] = "cancelled"
+    task = flow.get("task")
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    await _stop_oauth_process(flow)
+    return _public_oauth_flow(flow_id, flow)
+
+
 # ---------------------------------------------------------------------------
 # Handlers — auth
 # ---------------------------------------------------------------------------
@@ -216,11 +448,10 @@ def _build_auth_handlers(adapter) -> List[tuple]:
         for provider in sorted(PROVIDER_REGISTRY):
             status = _pool_status(provider)
             status["id"] = provider
+            status["name"] = getattr(PROVIDER_REGISTRY[provider], "name", provider)
             status["oauth_capable"] = provider in _OAUTH_CAPABLE_PROVIDERS
-            # Only anthropic's flow is implemented over HTTP so far; the rest
-            # are device-code flows with a different shape. Say so per-provider
-            # rather than letting the UI offer a button that cannot work.
             status["oauth_over_http"] = provider in _HTTP_OAUTH_PROVIDERS
+            status["oauth_unavailable_reason"] = _OAUTH_UNAVAILABLE_REASONS.get(provider)
             out.append(status)
         return web.json_response({"object": "list", "data": out})
 
@@ -236,15 +467,21 @@ def _build_auth_handlers(adapter) -> List[tuple]:
         provider = str((body or {}).get("provider", "") or "").strip().lower()
         if not provider:
             return _err(400, "Field 'provider' is required.")
+        if provider in _OAUTH_UNAVAILABLE_REASONS:
+            return _err(
+                410,
+                _OAUTH_UNAVAILABLE_REASONS[provider],
+                provider=provider,
+            )
         if provider not in _HTTP_OAUTH_PROVIDERS:
             return _err(
                 501,
-                f"Provider '{provider}' has no browser OAuth flow in Sentry yet. "
-                f"Log it in on the server with: "
-                f"hermes auth add {provider} --type oauth",
+                f"Provider '{provider}' cannot currently be connected from Sentry.",
                 provider=provider,
-                cli_command=f"hermes auth add {provider} --type oauth",
             )
+
+        if provider in _DEVICE_OAUTH_PROVIDERS:
+            return web.json_response(await _start_device_oauth(provider))
 
         try:
             mod = _anthropic_oauth_module()
@@ -271,16 +508,20 @@ def _build_auth_handlers(adapter) -> List[tuple]:
 
         _sweep_flows()
         _flows[flow_id] = {
+            "kind": "paste",
             "provider": provider,
             "verifier": verifier,
             "state": state,
+            "status": "awaiting_user",
             "created_at": time.time(),
         }
 
         return web.json_response(
             {
                 "flow_id": flow_id,
+                "flow_kind": "paste",
                 "provider": provider,
+                "status": "awaiting_user",
                 "authorize_url": authorize_url,
                 "expires_in": _FLOW_TTL_SECONDS,
                 # Anthropic shows "<code>#<state>" on the callback page. The
@@ -360,6 +601,31 @@ def _build_auth_handlers(adapter) -> List[tuple]:
 
         return web.json_response({"provider": provider, "credential": persisted})
 
+    async def oauth_status(request: "web.Request") -> "web.Response":
+        """GET /v1/auth/oauth/{flow_id} — browser-safe flow progress."""
+        auth_err = adapter._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        _sweep_flows()
+        flow_id = request.match_info.get("flow_id", "").strip()
+        flow = _flows.get(flow_id)
+        if flow is None:
+            return _err(404, "Unknown or expired OAuth flow. Start a new login.")
+        return web.json_response(_public_oauth_flow(flow_id, flow))
+
+    async def cancel_oauth(request: "web.Request") -> "web.Response":
+        """DELETE /v1/auth/oauth/{flow_id} — cancel polling and reap its process."""
+        auth_err = adapter._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        flow_id = request.match_info.get("flow_id", "").strip()
+        result = await _cancel_oauth_flow(flow_id)
+        if result is None:
+            return _err(404, "Unknown or expired OAuth flow.")
+        return web.json_response(result)
+
     async def logout(request: "web.Request") -> "web.Response":
         """DELETE /v1/auth/providers/{provider} — drop stored credentials.
 
@@ -407,16 +673,29 @@ def _build_auth_handlers(adapter) -> List[tuple]:
         ("GET", "/v1/auth/providers", list_providers),
         ("POST", "/v1/auth/oauth/start", start_oauth),
         ("POST", "/v1/auth/oauth/complete", complete_oauth),
+        ("GET", "/v1/auth/oauth/{flow_id}", oauth_status),
+        ("DELETE", "/v1/auth/oauth/{flow_id}", cancel_oauth),
         ("DELETE", "/v1/auth/providers/{provider}", logout),
     ]
 
 
 # Providers whose OAuth flow this module can drive over HTTP. Anthropic is a
-# redirect-and-paste PKCE flow, which splits cleanly into two requests. The
-# other OAuth-capable providers are device-code flows that poll a token endpoint
-# from inside a blocking helper; wiring those means a third endpoint shape, so
-# they stay CLI-only rather than half-supported.
-_HTTP_OAUTH_PROVIDERS = frozenset({"anthropic"})
+# redirect-and-paste PKCE flow. The rest are official Hermes device-code flows
+# driven by a fixed background CLI process and polled from the Sentry browser.
+_DEVICE_OAUTH_PROVIDERS = frozenset(
+    {"nous", "openai-codex", "xai-oauth", "minimax-oauth"}
+)
+_HTTP_OAUTH_PROVIDERS = frozenset({"anthropic"}) | _DEVICE_OAUTH_PROVIDERS
+
+# Qwen OAuth's free tier and new enrollments were retired by the provider on
+# 2026-04-15. Keeping a terminal command here would turn a discontinued flow
+# into an operator chore that still cannot succeed.
+_OAUTH_UNAVAILABLE_REASONS = {
+    "qwen-oauth": (
+        "Qwen OAuth is no longer offered for new connections. "
+        "Use a supported Qwen or Alibaba Coding Plan credential instead."
+    )
+}
 
 
 def _persist_oauth_credential(
