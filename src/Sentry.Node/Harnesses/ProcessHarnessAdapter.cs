@@ -43,6 +43,7 @@ public interface IInteractiveHarnessAdapter : IHarnessAdapter
         WorkspaceRegistration workspace,
         string runtimeSessionId,
         string model,
+        Sentry.Node.Gateway.NativeRuntimeOptions options,
         IInteractiveHarnessBridge bridge,
         CancellationToken cancellationToken);
 }

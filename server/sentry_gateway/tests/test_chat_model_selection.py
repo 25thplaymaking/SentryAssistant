@@ -96,6 +96,7 @@ class NativeAwareRuntime(FakeRuntime):
             ],
         )
         self.workspaces = []
+        self.native_options = []
 
     async def native_runtime_status(self, _profile_id):
         return {
@@ -104,6 +105,21 @@ class NativeAwareRuntime(FakeRuntime):
             "version": "codex-cli 0.144.6",
             "auth_mode": "chatgpt",
             "features": ["threads", "skills", "apps", "mcp", "sandbox", "approvals"],
+            "inventory": {
+                "skills": [{"name": "ui-review", "description": "Review an interface"}],
+                "apps": [{"id": "calendar", "name": "Calendar"}],
+                "mcp_servers": [{"name": "browser", "status": "ready"}],
+                "plugins": [{"name": "workspace-tools", "enabled": True}],
+                "hooks": [{"event": "after_turn", "enabled": True}],
+                "models": [
+                    {
+                        "id": "gpt-5.6-sol",
+                        "default_effort": "high",
+                        "reasoning_efforts": ["medium", "high", "xhigh"],
+                        "supports_personality": True,
+                    }
+                ],
+            },
             "workspaces": [{"id": "server-work", "modes": ["readOnly", "workspaceWrite"]}],
         }
 
@@ -114,6 +130,7 @@ class NativeAwareRuntime(FakeRuntime):
         self.turns.append((request.profile_id, request.prompt, request.model))
         self.experiences.append(request.experience)
         self.workspaces.append(request.workspace_id)
+        self.native_options.append(request.native_options)
         yield RuntimeEvent(
             type=RuntimeEventType.TURN_COMPLETED,
             session_id=request.session_id,
@@ -258,6 +275,8 @@ class TestAdvertisedList:
         ]
         assert payload["native_runtimes"][0]["available"] is True
         assert payload["native_runtimes"][0]["workspaces"][0]["id"] == "server-work"
+        assert payload["native_runtimes"][0]["inventory"]["skills"][0]["name"] == "ui-review"
+        assert payload["native_runtimes"][0]["inventory"]["models"][0]["default_effort"] == "high"
 
     def test_codex_model_forces_work_and_forwards_named_workspace(self):
         runtime = NativeAwareRuntime()
@@ -275,6 +294,57 @@ class TestAdvertisedList:
         assert resp.status_code == 200
         assert runtime.experiences == [RuntimeExperience.WORK]
         assert runtime.workspaces == ["server-work"]
+
+    def test_codex_controls_are_validated_and_forwarded_to_the_native_runtime(self):
+        runtime = NativeAwareRuntime()
+        client = build_client(runtime)
+        response = client.post(
+            "/api/chat/turn",
+            json={
+                "prompt": "review it",
+                "model": "chatgpt-plan/gpt-5.6-sol",
+                "workspace_id": "server-work",
+                "native_options": {
+                    "action": "review",
+                    "collaboration_mode": "plan",
+                    "effort": "xhigh",
+                    "personality": "friendly",
+                    "approval_policy": "untrusted",
+                    "sandbox": "readOnly",
+                    "review_target": "uncommittedChanges",
+                },
+            },
+            headers=bearer(PROFILE_A),
+        )
+
+        assert response.status_code == 200
+        assert runtime.native_options == [
+            {
+                "action": "review",
+                "collaboration_mode": "plan",
+                "effort": "xhigh",
+                "personality": "friendly",
+                "approval_policy": "untrusted",
+                "sandbox": "readOnly",
+                "review_target": "uncommittedChanges",
+            }
+        ]
+
+    def test_native_controls_are_refused_for_a_non_codex_model(self):
+        runtime = NativeAwareRuntime()
+        response = build_client(runtime).post(
+            "/api/chat/turn",
+            json={
+                "prompt": "chat",
+                "model": "deepseek/deepseek-chat",
+                "experience": "chat",
+                "native_options": {"collaboration_mode": "plan"},
+            },
+            headers=bearer(PROFILE_A),
+        )
+
+        assert response.status_code == 400
+        assert runtime.turns == []
 
     def test_empty_registry_lists_nothing_rather_than_a_fallback(self):
         """No routes must mean no options -- never a catalogue of unreachables."""

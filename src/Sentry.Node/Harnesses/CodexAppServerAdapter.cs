@@ -15,12 +15,10 @@ namespace Sentry.Node.Harnesses;
 /// </summary>
 public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
 {
-    private static readonly string[] NativeFeatures =
+    private static readonly string[] CoreFeatures =
     [
-        "threads", "streaming", "approvals", "user-input", "goals",
-        "skills", "apps", "mcp", "plugins", "sandbox", "review",
-        "worktrees", "filesystem", "web-search", "images", "subagents",
-        "hooks", "configuration", "interrupt"
+        "threads", "streaming", "approvals", "user-input", "plans",
+        "sandbox", "review", "interrupt"
     ];
     private static readonly HashSet<string> InteractiveRequests = new(StringComparer.Ordinal)
     {
@@ -63,12 +61,13 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
 
     public static async Task<NativeRuntimeRegistration> ProbeAsync(
         string executable,
+        IEnumerable<WorkspaceRegistration> workspaces,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(executable) || !File.Exists(executable))
         {
             return new NativeRuntimeRegistration(
-                false, null, null, [], NativeFeatures,
+                false, null, null, [], CoreFeatures,
                 "The Codex executable was not found.");
         }
 
@@ -77,7 +76,7 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
         {
             version = await ReadVersionAsync(executable, cancellationToken);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            timeout.CancelAfter(TimeSpan.FromSeconds(60));
             await using var rpc = await AppServerProcess.StartAsync(executable, timeout.Token);
             await rpc.InitializeAsync(timeout.Token);
 
@@ -94,6 +93,73 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
                 2, "account/read", new Dictionary<string, object?>(), timeout.Token);
 
             var models = ExtractModels(modelResponse);
+            var features = CoreFeatures.ToList();
+            var inventory = new Dictionary<string, object>(StringComparer.Ordinal);
+            inventory["models"] = ExtractModelInventory(modelResponse);
+            var cwds = workspaces
+                .Where(workspace => workspace.AllowedHarnesses.Contains("codex"))
+                .Select(workspace => Path.GetFullPath(workspace.RootPath))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var requestId = 100;
+
+            async Task<JsonElement?> OptionalCallAsync(string method, object parameters)
+            {
+                try
+                {
+                    var response = await rpc.CallAsync(requestId++, method, parameters, timeout.Token);
+                    return ErrorMessage(response) is null ? response : null;
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            var skillsResponse = await OptionalCallAsync(
+                "skills/list", new Dictionary<string, object?> { ["cwds"] = cwds, ["forceReload"] = false });
+            if (skillsResponse is JsonElement skills)
+            {
+                inventory["skills"] = ExtractSkills(skills);
+                features.Add("skills");
+            }
+            var appsResponse = await OptionalCallAsync(
+                "app/list", new Dictionary<string, object?> { ["limit"] = 200, ["forceRefetch"] = false });
+            if (appsResponse is JsonElement apps)
+            {
+                inventory["apps"] = ExtractApps(apps);
+                features.Add("apps");
+            }
+            var mcpResponse = await OptionalCallAsync(
+                "mcpServerStatus/list", new Dictionary<string, object?> { ["limit"] = 200, ["detail"] = "toolsAndAuthOnly" });
+            if (mcpResponse is JsonElement mcp)
+            {
+                inventory["mcp_servers"] = ExtractMcpServers(mcp);
+                features.Add("mcp");
+            }
+            var pluginsResponse = await OptionalCallAsync(
+                "plugin/installed", new Dictionary<string, object?> { ["cwds"] = cwds });
+            if (pluginsResponse is JsonElement plugins)
+            {
+                inventory["plugins"] = ExtractPlugins(plugins);
+                features.Add("plugins");
+            }
+            var hooksResponse = await OptionalCallAsync(
+                "hooks/list", new Dictionary<string, object?> { ["cwds"] = cwds });
+            if (hooksResponse is JsonElement hooks)
+            {
+                inventory["hooks"] = ExtractHooks(hooks);
+                features.Add("hooks");
+            }
+            var modesResponse = await OptionalCallAsync(
+                "collaborationMode/list", new Dictionary<string, object?>());
+            if (modesResponse is JsonElement modes)
+                inventory["collaboration_modes"] = ExtractCollaborationModes(modes);
+            var capabilitiesResponse = await OptionalCallAsync(
+                "modelProviderCapabilities/read", new Dictionary<string, object?>());
+            if (capabilitiesResponse is JsonElement capabilities)
+                inventory["provider_capabilities"] = ExtractProviderCapabilities(capabilities);
+            var safeInventory = SanitizeInventory(inventory, workspaces);
             var authMode = ExtractString(accountResponse, "result", "account", "authMode")
                 ?? ExtractString(accountResponse, "result", "authMode");
             var error = ErrorMessage(modelResponse) ?? ErrorMessage(accountResponse);
@@ -103,8 +169,9 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
                 version,
                 authMode,
                 models,
-                NativeFeatures,
-                available ? null : error ?? "Codex returned no subscription models.");
+                features.Distinct(StringComparer.Ordinal).ToArray(),
+                available ? null : error ?? "Codex returned no subscription models.",
+                safeInventory);
         }
         catch (Exception exception)
         {
@@ -113,7 +180,7 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
                 version,
                 null,
                 [],
-                NativeFeatures,
+                CoreFeatures,
                 $"Codex App Server probe failed: {exception.GetType().Name}");
         }
     }
@@ -124,6 +191,7 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
         WorkspaceRegistration workspace,
         string runtimeSessionId,
         string model,
+        NativeRuntimeOptions options,
         IInteractiveHarnessBridge bridge,
         CancellationToken cancellationToken)
     {
@@ -133,6 +201,8 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
             return Failure("The selected local workspace is unavailable.");
         if (mode is not ("readOnly" or "workspaceWrite"))
             return Failure($"Mode '{mode}' is not supported by native Codex.");
+        if (!string.Equals(options.Sandbox, mode, StringComparison.Ordinal))
+            return Failure("The selected Codex sandbox did not match the signed work order.");
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(_timeout);
@@ -155,7 +225,7 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
                 threadResponse = await rpc.CallAsync(
                     10,
                     "thread/resume",
-                    ThreadParams(threadId, model, mode, workspace.RootPath),
+                    ThreadParams(threadId, model, mode, workspace.RootPath, options),
                     token);
                 if (ErrorMessage(threadResponse) is not null)
                 {
@@ -169,7 +239,7 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
                 threadResponse = await rpc.CallAsync(
                     11,
                     "thread/start",
-                    ThreadParams(null, model, mode, workspace.RootPath),
+                    ThreadParams(null, model, mode, workspace.RootPath, options),
                     token);
                 var startError = ErrorMessage(threadResponse);
                 if (startError is not null)
@@ -180,22 +250,42 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
                 await _sessions.WriteAsync(sessionKey, threadId, token);
             }
 
-            var turnResponse = await rpc.CallAsync(
-                20,
-                "turn/start",
-                new Dictionary<string, object?>
-                {
-                    ["threadId"] = threadId,
-                    ["input"] = new object[]
+            var settingsResponse = await rpc.CallAsync(
+                12, "thread/settings/update",
+                RuntimeSettings(threadId, model, mode, workspace.RootPath, options), token);
+            if (ErrorMessage(settingsResponse) is string settingsError)
+                return Failure($"Codex could not apply the selected controls: {settingsError}", threadId);
+
+            JsonElement turnResponse;
+            if (options.Action == "review")
+            {
+                turnResponse = await rpc.CallAsync(
+                    20,
+                    "review/start",
+                    new Dictionary<string, object?>
                     {
-                        new Dictionary<string, object?>
+                        ["threadId"] = threadId,
+                        ["delivery"] = "inline",
+                        ["target"] = new Dictionary<string, object?>
                         {
-                            ["type"] = "text",
-                            ["text"] = prompt
+                            ["type"] = options.ReviewTarget
                         }
+                    },
+                    token);
+            }
+            else
+            {
+                var turnParams = RuntimeSettings(threadId, model, mode, workspace.RootPath, options);
+                turnParams["input"] = new object[]
+                {
+                    new Dictionary<string, object?>
+                    {
+                        ["type"] = "text",
+                        ["text"] = prompt
                     }
-                },
-                token);
+                };
+                turnResponse = await rpc.CallAsync(20, "turn/start", turnParams, token);
+            }
             var turnError = ErrorMessage(turnResponse);
             if (turnError is not null)
                 return Failure($"Codex could not start the turn: {turnError}", threadId);
@@ -298,6 +388,8 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
                                     ["model"] = model,
                                     ["workspaceId"] = workspace.WorkspaceId,
                                     ["mode"] = mode,
+                                    ["action"] = options.Action,
+                                    ["collaborationMode"] = options.CollaborationMode,
                                     ["events"] = eventCount
                                 });
                         }
@@ -374,17 +466,48 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
     }
 
     private static Dictionary<string, object?> ThreadParams(
-        string? threadId, string model, string mode, string cwd)
+        string? threadId, string model, string mode, string cwd, NativeRuntimeOptions options)
     {
         var result = new Dictionary<string, object?>
         {
             ["model"] = model,
             ["cwd"] = cwd,
-            ["approvalPolicy"] = "on-request",
+            ["approvalPolicy"] = options.ApprovalPolicy,
             ["sandbox"] = mode == "readOnly" ? "read-only" : "workspace-write",
+            ["personality"] = options.Personality,
             ["serviceName"] = "frontir-sentry"
         };
         if (!string.IsNullOrWhiteSpace(threadId)) result["threadId"] = threadId;
+        return result;
+    }
+
+    private static Dictionary<string, object?> RuntimeSettings(
+        string threadId, string model, string mode, string cwd, NativeRuntimeOptions options)
+    {
+        var collaborationSettings = new Dictionary<string, object?> { ["model"] = model };
+        if (!string.IsNullOrWhiteSpace(options.Effort))
+            collaborationSettings["reasoning_effort"] = options.Effort;
+        var result = new Dictionary<string, object?>
+        {
+            ["threadId"] = threadId,
+            ["model"] = model,
+            ["cwd"] = cwd,
+            ["approvalPolicy"] = options.ApprovalPolicy,
+            ["personality"] = options.Personality,
+            ["collaborationMode"] = new Dictionary<string, object?>
+            {
+                ["mode"] = options.CollaborationMode,
+                ["settings"] = collaborationSettings
+            },
+            ["sandboxPolicy"] = mode == "readOnly"
+                ? new Dictionary<string, object?> { ["type"] = "readOnly" }
+                : new Dictionary<string, object?>
+                {
+                    ["type"] = "workspaceWrite",
+                    ["writableRoots"] = new[] { cwd }
+                }
+        };
+        if (!string.IsNullOrWhiteSpace(options.Effort)) result["effort"] = options.Effort;
         return result;
     }
 
@@ -585,13 +708,283 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
         if (!response.TryGetProperty("result", out var body)
             || !body.TryGetProperty("data", out var data)
             || data.ValueKind != JsonValueKind.Array) return result;
-        foreach (var item in data.EnumerateArray())
+        foreach (var item in data.EnumerateArray().Take(200))
         {
             var id = ExtractString(item, "id") ?? ExtractString(item, "model");
             if (!string.IsNullOrWhiteSpace(id) && !result.Contains(id, StringComparer.Ordinal))
                 result.Add(id);
         }
         return result;
+    }
+
+    private static bool TryResult(JsonElement response, out JsonElement result)
+    {
+        result = default;
+        return response.ValueKind == JsonValueKind.Object
+            && response.TryGetProperty("result", out result)
+            && result.ValueKind == JsonValueKind.Object;
+    }
+
+    private static bool ExtractBool(JsonElement root, string name, bool fallback = false) =>
+        root.ValueKind == JsonValueKind.Object
+        && root.TryGetProperty(name, out var value)
+        && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : fallback;
+
+    private static List<Dictionary<string, object?>> ExtractModelInventory(JsonElement response)
+    {
+        var items = new List<Dictionary<string, object?>>();
+        if (!TryResult(response, out var body)
+            || !body.TryGetProperty("data", out var data)
+            || data.ValueKind != JsonValueKind.Array) return items;
+        foreach (var item in data.EnumerateArray())
+        {
+            var id = ExtractString(item, "id") ?? ExtractString(item, "model");
+            if (string.IsNullOrWhiteSpace(id)) continue;
+            var efforts = new List<string>();
+            if (item.TryGetProperty("supportedReasoningEfforts", out var effortItems)
+                && effortItems.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var effort in effortItems.EnumerateArray())
+                {
+                    var value = ExtractString(effort, "reasoningEffort");
+                    if (!string.IsNullOrWhiteSpace(value)) efforts.Add(value);
+                }
+            }
+            items.Add(new Dictionary<string, object?>
+            {
+                ["id"] = id,
+                ["display_name"] = ExtractString(item, "displayName") ?? id,
+                ["description"] = Truncate(ExtractString(item, "description") ?? "", 500),
+                ["is_default"] = ExtractBool(item, "isDefault"),
+                ["default_effort"] = ExtractString(item, "defaultReasoningEffort"),
+                ["reasoning_efforts"] = efforts,
+                ["supports_personality"] = ExtractBool(item, "supportsPersonality")
+            });
+        }
+        return items;
+    }
+
+    private static List<Dictionary<string, object?>> ExtractSkills(JsonElement response)
+    {
+        var items = new List<Dictionary<string, object?>>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!TryResult(response, out var body)
+            || !body.TryGetProperty("data", out var groups)
+            || groups.ValueKind != JsonValueKind.Array) return items;
+        foreach (var group in groups.EnumerateArray())
+        {
+            if (!group.TryGetProperty("skills", out var skills)
+                || skills.ValueKind != JsonValueKind.Array) continue;
+            foreach (var skill in skills.EnumerateArray())
+            {
+                if (items.Count >= 500) return items;
+                var name = ExtractString(skill, "name");
+                var scope = ExtractString(skill, "scope") ?? "user";
+                if (string.IsNullOrWhiteSpace(name) || !seen.Add($"{scope}\n{name}")) continue;
+                var shortDescription = ExtractString(skill, "shortDescription")
+                    ?? ExtractString(skill, "interface", "shortDescription");
+                items.Add(new Dictionary<string, object?>
+                {
+                    ["name"] = name,
+                    ["scope"] = scope,
+                    ["enabled"] = ExtractBool(skill, "enabled", true),
+                    ["description"] = Truncate(ExtractString(skill, "description") ?? "", 1000),
+                    ["short_description"] = Truncate(shortDescription ?? "", 300)
+                });
+            }
+        }
+        return items;
+    }
+
+    private static List<Dictionary<string, object?>> ExtractApps(JsonElement response)
+    {
+        var items = new List<Dictionary<string, object?>>();
+        if (!TryResult(response, out var body)
+            || !body.TryGetProperty("data", out var data)
+            || data.ValueKind != JsonValueKind.Array) return items;
+        foreach (var app in data.EnumerateArray().Take(200))
+        {
+            var id = ExtractString(app, "id");
+            var name = ExtractString(app, "name");
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name)) continue;
+            items.Add(new Dictionary<string, object?>
+            {
+                ["id"] = id,
+                ["name"] = name,
+                ["description"] = Truncate(ExtractString(app, "description") ?? "", 1000),
+                ["enabled"] = ExtractBool(app, "isEnabled", true),
+                ["accessible"] = ExtractBool(app, "isAccessible")
+            });
+        }
+        return items;
+    }
+
+    private static List<Dictionary<string, object?>> ExtractMcpServers(JsonElement response)
+    {
+        var items = new List<Dictionary<string, object?>>();
+        if (!TryResult(response, out var body)
+            || !body.TryGetProperty("data", out var data)
+            || data.ValueKind != JsonValueKind.Array) return items;
+        foreach (var server in data.EnumerateArray().Take(200))
+        {
+            var name = ExtractString(server, "name");
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            var tools = new List<Dictionary<string, object?>>();
+            if (server.TryGetProperty("tools", out var toolObject)
+                && toolObject.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var tool in toolObject.EnumerateObject().Take(100))
+                {
+                    tools.Add(new Dictionary<string, object?>
+                    {
+                        ["name"] = ExtractString(tool.Value, "name") ?? tool.Name,
+                        ["description"] = Truncate(ExtractString(tool.Value, "description") ?? "", 500)
+                    });
+                }
+            }
+            items.Add(new Dictionary<string, object?>
+            {
+                ["name"] = name,
+                ["title"] = ExtractString(server, "serverInfo", "title"),
+                ["description"] = Truncate(ExtractString(server, "serverInfo", "description") ?? "", 500),
+                ["auth_status"] = ExtractString(server, "authStatus"),
+                ["tools"] = tools
+            });
+        }
+        return items;
+    }
+
+    private static List<Dictionary<string, object?>> ExtractPlugins(JsonElement response)
+    {
+        var items = new List<Dictionary<string, object?>>();
+        if (!TryResult(response, out var body)
+            || !body.TryGetProperty("marketplaces", out var marketplaces)
+            || marketplaces.ValueKind != JsonValueKind.Array) return items;
+        foreach (var marketplace in marketplaces.EnumerateArray())
+        {
+            if (!marketplace.TryGetProperty("plugins", out var plugins)
+                || plugins.ValueKind != JsonValueKind.Array) continue;
+            foreach (var plugin in plugins.EnumerateArray())
+            {
+                if (items.Count >= 500) return items;
+                if (!ExtractBool(plugin, "installed")) continue;
+                var id = ExtractString(plugin, "id");
+                var name = ExtractString(plugin, "name");
+                if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name)) continue;
+                var capabilities = new List<string>();
+                if (plugin.TryGetProperty("interface", out var interfaceValue)
+                    && interfaceValue.ValueKind == JsonValueKind.Object
+                    && interfaceValue.TryGetProperty("capabilities", out var capabilityValues)
+                    && capabilityValues.ValueKind == JsonValueKind.Array)
+                {
+                    capabilities.AddRange(capabilityValues.EnumerateArray()
+                        .Where(value => value.ValueKind == JsonValueKind.String)
+                        .Select(value => value.GetString()!)
+                        .Where(value => !string.IsNullOrWhiteSpace(value)));
+                }
+                items.Add(new Dictionary<string, object?>
+                {
+                    ["id"] = id,
+                    ["name"] = name,
+                    ["enabled"] = ExtractBool(plugin, "enabled", true),
+                    ["version"] = ExtractString(plugin, "localVersion") ?? ExtractString(plugin, "version"),
+                    ["description"] = Truncate(
+                        ExtractString(plugin, "interface", "shortDescription")
+                        ?? ExtractString(plugin, "interface", "longDescription") ?? "", 1000),
+                    ["capabilities"] = capabilities
+                });
+            }
+        }
+        return items;
+    }
+
+    private static List<Dictionary<string, object?>> ExtractHooks(JsonElement response)
+    {
+        var items = new List<Dictionary<string, object?>>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!TryResult(response, out var body)
+            || !body.TryGetProperty("data", out var groups)
+            || groups.ValueKind != JsonValueKind.Array) return items;
+        foreach (var group in groups.EnumerateArray())
+        {
+            if (!group.TryGetProperty("hooks", out var hooks)
+                || hooks.ValueKind != JsonValueKind.Array) continue;
+            foreach (var hook in hooks.EnumerateArray())
+            {
+                if (items.Count >= 500) return items;
+                var key = ExtractString(hook, "key");
+                if (string.IsNullOrWhiteSpace(key) || !seen.Add(key)) continue;
+                items.Add(new Dictionary<string, object?>
+                {
+                    ["key"] = key,
+                    ["event_name"] = ExtractString(hook, "eventName"),
+                    ["handler_type"] = ExtractString(hook, "handlerType"),
+                    ["enabled"] = ExtractBool(hook, "enabled", true),
+                    ["managed"] = ExtractBool(hook, "isManaged"),
+                    ["source"] = ExtractString(hook, "source"),
+                    ["trust_status"] = ExtractString(hook, "trustStatus"),
+                    ["status_message"] = Truncate(ExtractString(hook, "statusMessage") ?? "", 300)
+                });
+            }
+        }
+        return items;
+    }
+
+    private static List<Dictionary<string, object?>> ExtractCollaborationModes(JsonElement response)
+    {
+        var items = new List<Dictionary<string, object?>>();
+        if (!TryResult(response, out var body)
+            || !body.TryGetProperty("data", out var data)
+            || data.ValueKind != JsonValueKind.Array) return items;
+        foreach (var mode in data.EnumerateArray().Take(50))
+        {
+            var name = ExtractString(mode, "name");
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            items.Add(new Dictionary<string, object?>
+            {
+                ["name"] = name,
+                ["mode"] = ExtractString(mode, "mode"),
+                ["model"] = ExtractString(mode, "model"),
+                ["reasoning_effort"] = ExtractString(mode, "reasoning_effort")
+            });
+        }
+        return items;
+    }
+
+    private static Dictionary<string, object?> ExtractProviderCapabilities(JsonElement response)
+    {
+        if (!TryResult(response, out var body)) return new Dictionary<string, object?>();
+        return new Dictionary<string, object?>
+        {
+            ["web_search"] = ExtractBool(body, "webSearch"),
+            ["image_generation"] = ExtractBool(body, "imageGeneration"),
+            ["namespace_tools"] = ExtractBool(body, "namespaceTools")
+        };
+    }
+
+    private static IReadOnlyDictionary<string, object> SanitizeInventory(
+        Dictionary<string, object> inventory,
+        IEnumerable<WorkspaceRegistration> workspaces)
+    {
+        var node = JsonNode.Parse(JsonSerializer.Serialize(inventory, Json));
+        var roots = workspaces.ToArray();
+        if (roots.Length == 0)
+        {
+            SanitizeNode(
+                node,
+                Path.Combine(Path.GetTempPath(), "__sentry-unregistered-workspace__"),
+                "unavailable");
+        }
+        else
+        {
+            foreach (var workspace in roots)
+                SanitizeNode(node, Path.GetFullPath(workspace.RootPath), workspace.WorkspaceId);
+        }
+        return JsonSerializer.Deserialize<Dictionary<string, object>>(
+            node?.ToJsonString(Json) ?? "{}", Json)
+            ?? new Dictionary<string, object>();
     }
 
     private static string? ErrorMessage(JsonElement response)

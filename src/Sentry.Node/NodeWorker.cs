@@ -148,7 +148,10 @@ public sealed class NodeWorker
                     || !string.Equals(
                         dispatch.RuntimeModel,
                         validated.RuntimeModel,
-                        StringComparison.Ordinal))
+                        StringComparison.Ordinal)
+                    || dispatch.RuntimeOptions is null
+                    || validated.RuntimeOptions is null
+                    || dispatch.RuntimeOptions != validated.RuntimeOptions)
                 {
                     result = Refusal("Native runtime dispatch metadata did not match its signed work order.");
                 }
@@ -171,6 +174,7 @@ public sealed class NodeWorker
                             workspace,
                             validated.RuntimeSessionId,
                             validated.RuntimeModel,
+                            validated.RuntimeOptions,
                             bridge,
                             runCancellation.Token);
                     }

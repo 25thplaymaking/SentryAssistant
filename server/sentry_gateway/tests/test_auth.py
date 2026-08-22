@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 
 import pytest
@@ -122,6 +123,20 @@ class TestWorkOrderValidation:
         )
         assert claims["wid"] == "wo-1"
         assert order.nonce in seen
+
+    def test_native_runtime_options_are_integrity_protected_in_the_signed_order(self):
+        options = {
+            "action": "review",
+            "collaboration_mode": "plan",
+            "sandbox": "readOnly",
+            "effort": "high",
+        }
+        order = make_order(runtime_options=options)
+        claims = validate_work_order(
+            token=order.token, signing_key=KEY, expectation=NODE, seen_nonces=set()
+        )
+
+        assert json.loads(claims["ropts"]) == options
 
     def test_replayed_order_is_refused(self):
         order = make_order()

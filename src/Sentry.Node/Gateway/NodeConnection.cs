@@ -15,7 +15,17 @@ public sealed record DispatchedWorkOrder(
     [property: JsonPropertyName("mode")] string Mode,
     [property: JsonPropertyName("correlation_id")] string CorrelationId,
     [property: JsonPropertyName("runtime_session_id")] string? RuntimeSessionId = null,
-    [property: JsonPropertyName("runtime_model")] string? RuntimeModel = null);
+    [property: JsonPropertyName("runtime_model")] string? RuntimeModel = null,
+    [property: JsonPropertyName("runtime_options")] NativeRuntimeOptions? RuntimeOptions = null);
+
+public sealed record NativeRuntimeOptions(
+    [property: JsonPropertyName("action")] string Action = "turn",
+    [property: JsonPropertyName("collaboration_mode")] string CollaborationMode = "default",
+    [property: JsonPropertyName("effort")] string? Effort = null,
+    [property: JsonPropertyName("personality")] string Personality = "pragmatic",
+    [property: JsonPropertyName("approval_policy")] string ApprovalPolicy = "on-request",
+    [property: JsonPropertyName("sandbox")] string Sandbox = "workspaceWrite",
+    [property: JsonPropertyName("review_target")] string ReviewTarget = "uncommittedChanges");
 
 public sealed record WorkspaceRegistrationRequest(
     [property: JsonPropertyName("workspace_id")] string WorkspaceId,
@@ -33,7 +43,8 @@ public sealed record NativeRuntimeRegistration(
     [property: JsonPropertyName("auth_mode")] string? AuthMode,
     [property: JsonPropertyName("models")] IReadOnlyList<string> Models,
     [property: JsonPropertyName("features")] IReadOnlyList<string> Features,
-    [property: JsonPropertyName("reason")] string? Reason = null);
+    [property: JsonPropertyName("reason")] string? Reason = null,
+    [property: JsonPropertyName("inventory")] IReadOnlyDictionary<string, object>? Inventory = null);
 
 public sealed record NodeRegistrationResponse(
     [property: JsonPropertyName("node_id")] Guid NodeId,

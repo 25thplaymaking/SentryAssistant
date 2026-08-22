@@ -28,6 +28,7 @@ public class WorkOrderValidatorTests
         string? teamId = null,
         string? runtimeSessionId = null,
         string? runtimeModel = null,
+        string? runtimeOptions = null,
         int lifetimeMinutes = 15,
         string? nonce = null)
     {
@@ -50,6 +51,7 @@ public class WorkOrderValidatorTests
         if (teamId is not null) claims.Add(new Claim("tid", teamId));
         if (runtimeSessionId is not null) claims.Add(new Claim("rsid", runtimeSessionId));
         if (runtimeModel is not null) claims.Add(new Claim("rmodel", runtimeModel));
+        if (runtimeOptions is not null) claims.Add(new Claim("ropts", runtimeOptions));
 
         // notBefore is derived from expiry so a negative lifetime still produces a
         // structurally valid (but expired) token rather than failing construction.
@@ -82,6 +84,31 @@ public class WorkOrderValidatorTests
             runtimeModel: "gpt-5.6-sol"));
         Assert.Equal("sentry-session-1", order.RuntimeSessionId);
         Assert.Equal("gpt-5.6-sol", order.RuntimeModel);
+    }
+
+    [Fact]
+    public void PreservesAndValidatesSignedNativeRuntimeOptions()
+    {
+        var order = new WorkOrderValidator(Key, Expectation()).Validate(Sign(
+            mode: "readOnly",
+            runtimeOptions: """{"action":"review","collaboration_mode":"plan","effort":"high","personality":"friendly","approval_policy":"untrusted","sandbox":"readOnly","review_target":"uncommittedChanges"}"""));
+
+        Assert.NotNull(order.RuntimeOptions);
+        Assert.Equal("review", order.RuntimeOptions.Action);
+        Assert.Equal("plan", order.RuntimeOptions.CollaborationMode);
+        Assert.Equal("high", order.RuntimeOptions.Effort);
+        Assert.Equal("readOnly", order.RuntimeOptions.Sandbox);
+    }
+
+    [Fact]
+    public void RejectsNativeSandboxThatDoesNotMatchTheSignedMode()
+    {
+        var exception = Assert.Throws<WorkOrderRejectedException>(
+            () => new WorkOrderValidator(Key, Expectation()).Validate(Sign(
+                mode: "readOnly",
+                runtimeOptions: """{"action":"turn","collaboration_mode":"default","personality":"pragmatic","approval_policy":"on-request","sandbox":"workspaceWrite","review_target":"uncommittedChanges"}""")));
+
+        Assert.Contains("does not match", exception.Message);
     }
 
     [Fact]

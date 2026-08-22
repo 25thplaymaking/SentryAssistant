@@ -116,7 +116,7 @@ if (!string.IsNullOrWhiteSpace(config.CodexExecutable)
         config.CodexSessionPath, configDirectory, "codex-sessions.json");
     var codex = new CodexAppServerAdapter(config.CodexExecutable, codexStatePath);
     var probe = await CodexAppServerAdapter.ProbeAsync(
-        config.CodexExecutable, CancellationToken.None);
+        config.CodexExecutable, registrations, CancellationToken.None);
     nativeRuntimes["codex"] = probe;
     if (probe.Available)
         harnesses["codex"] = codex;

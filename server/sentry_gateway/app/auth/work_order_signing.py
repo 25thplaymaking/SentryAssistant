@@ -8,6 +8,7 @@ must never execute on the strength of a signature alone.
 
 from __future__ import annotations
 
+import json
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -61,6 +62,7 @@ def sign_work_order(
     correlation_id: str,
     runtime_session_id: str | None = None,
     runtime_model: str | None = None,
+    runtime_options: dict[str, Any] | None = None,
     ttl: timedelta = DEFAULT_WORK_ORDER_TTL,
     algorithm: str = "HS256",
 ) -> SignedWorkOrder:
@@ -87,6 +89,10 @@ def sign_work_order(
         claims["rsid"] = runtime_session_id
     if runtime_model:
         claims["rmodel"] = runtime_model
+    if runtime_options:
+        claims["ropts"] = json.dumps(
+            runtime_options, sort_keys=True, separators=(",", ":")
+        )
     token = jwt.encode(
         claims,
         signing_key,

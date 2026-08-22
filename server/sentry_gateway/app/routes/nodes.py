@@ -54,6 +54,7 @@ class DispatchedWorkOrder(BaseModel):
     correlation_id: str
     runtime_session_id: str | None = None
     runtime_model: str | None = None
+    runtime_options: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunResult(BaseModel):
@@ -263,7 +264,7 @@ async def claim_work(
                 """
                 SELECT w.id, w.prompt, w.workspace_id, w.harness, w.mode,
                        w.correlation_id, w.requested_by, w.team_id, w.profile_id,
-                       w.runtime_session_id, w.runtime_model
+                       w.runtime_session_id, w.runtime_model, w.runtime_options
                 FROM work_orders w
                 WHERE w.execution_node_id = $1
                   AND w.state = 'assigned'
@@ -289,6 +290,7 @@ async def claim_work(
                     correlation_id=row["correlation_id"],
                     runtime_session_id=row["runtime_session_id"],
                     runtime_model=row["runtime_model"],
+                    runtime_options=_json_object(row["runtime_options"]),
                 )
 
                 # Record the nonce so a replayed dispatch is refused even if the
@@ -342,6 +344,7 @@ async def claim_work(
                         correlation_id=row["correlation_id"],
                         runtime_session_id=row["runtime_session_id"],
                         runtime_model=row["runtime_model"],
+                        runtime_options=_json_object(row["runtime_options"]),
                     )
                 )
 

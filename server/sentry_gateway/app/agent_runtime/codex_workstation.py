@@ -110,6 +110,7 @@ class CodexWorkstationRuntime:
                     "auth_mode": codex.get("auth_mode") if isinstance(codex, dict) else None,
                     "models": list(codex.get("models") or []) if isinstance(codex, dict) else [],
                     "features": list(codex.get("features") or []) if isinstance(codex, dict) else [],
+                    "inventory": _json_object(codex.get("inventory")) if isinstance(codex, dict) else {},
                     "workspaces": [],
                     "last_seen_at": last_seen.isoformat() if last_seen else None,
                 },
@@ -222,12 +223,26 @@ class CodexWorkstationRuntime:
             )
             return
 
-        mode = (
-            "workspaceWrite"
-            if request.experience is RuntimeExperience.WORK
-            and "workspaceWrite" in workspace["modes"]
-            else "readOnly"
-        )
+        options = dict(request.native_options or {})
+        requested_mode = str(options.get("sandbox") or "workspaceWrite")
+        mode = "readOnly" if requested_mode == "readOnly" else "workspaceWrite"
+        if mode == "workspaceWrite" and (
+            request.experience is not RuntimeExperience.WORK
+            or "workspaceWrite" not in workspace["modes"]
+        ):
+            yield self._event(
+                RuntimeEventType.TURN_FAILED,
+                request,
+                "This linked workspace does not allow the selected Codex write access.",
+            )
+            return
+        if mode == "readOnly" and "readOnly" not in workspace["modes"]:
+            yield self._event(
+                RuntimeEventType.TURN_FAILED,
+                request,
+                "This linked workspace does not allow read-only Codex access.",
+            )
+            return
         work_order_id = uuid4()
         source_model = self.source_model(str(request.model))
         expires_at = datetime.now(timezone.utc) + timedelta(hours=12)
@@ -240,10 +255,11 @@ class CodexWorkstationRuntime:
                         id, requested_by, profile_id, team_id, conversation_id,
                         assigned_user_id, execution_node_id, harness, workspace_id,
                         title, prompt, state, mode, completion_criteria,
-                        correlation_id, expires_at, runtime_session_id, runtime_model
+                        correlation_id, expires_at, runtime_session_id, runtime_model,
+                        runtime_options
                     ) VALUES (
                         $1,$2,$3,NULL,$4,$2,$5,'codex',$6,
-                        $7,$8,'assigned',$9,$10,$11,$12,$13,$14
+                        $7,$8,'assigned',$9,$10,$11,$12,$13,$14,$15
                     )
                     """,
                     work_order_id,
@@ -252,7 +268,7 @@ class CodexWorkstationRuntime:
                     uuid4(),
                     UUID(status["node_id"]),
                     workspace["id"],
-                    "Native Codex turn",
+                    "Native Codex review" if options.get("action") == "review" else "Native Codex turn",
                     request.prompt,
                     mode,
                     ["Complete the requested Codex turn and return its native event evidence."],
@@ -260,6 +276,7 @@ class CodexWorkstationRuntime:
                     expires_at,
                     request.session_id,
                     source_model,
+                    json.dumps(options),
                 )
                 await conn.execute(
                     """
@@ -305,6 +322,7 @@ class CodexWorkstationRuntime:
                     "node": status["node_name"],
                     "model": source_model,
                     "mode": mode,
+                    "native_options": options,
                 },
             )
 

@@ -10,6 +10,7 @@ profile's agent (that would run one person's work inside another's).
 from __future__ import annotations
 
 import json
+from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -31,6 +32,18 @@ from .deps import Caller, require_caller
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
+class NativeTurnOptions(BaseModel):
+    """The native controls Sentry currently executes, not a capability wish-list."""
+
+    action: Literal["turn", "review"] = "turn"
+    collaboration_mode: Literal["default", "plan"] = "default"
+    effort: Literal["minimal", "low", "medium", "high", "xhigh", "max", "ultra"] | None = None
+    personality: Literal["none", "friendly", "pragmatic"] = "pragmatic"
+    approval_policy: Literal["on-request", "untrusted"] = "on-request"
+    sandbox: Literal["readOnly", "workspaceWrite"] = "workspaceWrite"
+    review_target: Literal["uncommittedChanges"] = "uncommittedChanges"
+
+
 class ChatTurnRequest(BaseModel):
     prompt: str = Field(min_length=1)
     #: Continue an existing conversation. Absent on the first turn.
@@ -48,6 +61,9 @@ class ChatTurnRequest(BaseModel):
     #: Named local workspace for a native workstation runtime.  It is an
     #: allowlisted identifier, never a client-supplied filesystem path.
     workspace_id: str | None = Field(default=None, min_length=1, max_length=200)
+    #: Present only for a selected native runtime. Every value is allowlisted
+    #: above, persisted with the work order, and included in its signed claim.
+    native_options: NativeTurnOptions | None = None
 
 
 class NativeRuntimeResponse(BaseModel):
@@ -66,6 +82,36 @@ def _json_object(value) -> dict:
             return {}
         return decoded if isinstance(decoded, dict) else {}
     return {}
+
+
+async def _profile_memory(request: Request, profile_id: UUID) -> tuple[tuple[str, str], ...]:
+    """Load a bounded, profile-scoped memory snapshot for this one turn."""
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        return ()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT section, content FROM profile_memory "
+                "WHERE profile_id = $1 ORDER BY section",
+                profile_id,
+            )
+    except Exception:
+        # Memory is useful context, not an execution prerequisite. A temporary
+        # read failure must not turn a properly authenticated, audited turn into
+        # a 500; the assistant simply runs without the optional snapshot.
+        return ()
+    remaining = 24_000
+    result: list[tuple[str, str]] = []
+    for row in rows:
+        section = str(row["section"] or "").strip()[:100]
+        content = str(row["content"] or "").strip()
+        if not section or not content or remaining <= 0:
+            continue
+        content = content[:remaining]
+        remaining -= len(content)
+        result.append((section, content))
+    return tuple(result)
 
 
 _EXPERIENCES = {
@@ -333,6 +379,7 @@ async def list_models(request: Request, caller: Caller = Depends(require_caller)
                 "version": discovered.get("version"),
                 "auth_mode": discovered.get("auth_mode"),
                 "features": list(discovered.get("features") or []),
+                "inventory": _json_object(discovered.get("inventory")),
                 "workspaces": list(discovered.get("workspaces") or []),
             }
         except Exception:
@@ -423,6 +470,19 @@ async def chat_turn(
     # Validate the model BEFORE the audit write: a turn that will be refused
     # should not leave an audit row claiming it ran.
     chosen_model = await _validated_model(runtime, caller.profile_id, body.model)
+    is_native_codex = bool(
+        chosen_model and str(chosen_model).startswith("chatgpt-plan/")
+    )
+    if body.native_options is not None and not is_native_codex:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Native Codex controls require a linked Codex subscription model.",
+        )
+    native_options = (
+        (body.native_options or NativeTurnOptions()).model_dump()
+        if is_native_codex
+        else {}
+    )
 
     audit = _audit_service(request)
     if audit is None:
@@ -472,6 +532,8 @@ async def chat_turn(
         model=chosen_model,
         experience=effective_experience,
         workspace_id=body.workspace_id,
+        native_options=native_options,
+        profile_memory=await _profile_memory(request, caller.profile_id),
     )
 
     # Recording lives here, not in the runtime adapter: this is where the pool

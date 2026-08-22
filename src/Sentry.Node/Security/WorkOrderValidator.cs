@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
+using Sentry.Node.Gateway;
 
 namespace Sentry.Node.Security;
 
@@ -29,7 +30,8 @@ public sealed record ValidatedWorkOrder(
     string CorrelationId,
     string Nonce,
     string? RuntimeSessionId,
-    string? RuntimeModel);
+    string? RuntimeModel,
+    NativeRuntimeOptions? RuntimeOptions);
 
 /// <summary>
 /// Validates a Gateway-signed work order before anything executes.
@@ -164,6 +166,23 @@ public sealed class WorkOrderValidator
                 "Requesting user is not a current member of this team.");
         }
 
+        NativeRuntimeOptions? runtimeOptions = null;
+        var runtimeOptionsClaim = principal.FindFirst("ropts")?.Value;
+        if (!string.IsNullOrWhiteSpace(runtimeOptionsClaim))
+        {
+            try
+            {
+                runtimeOptions = System.Text.Json.JsonSerializer.Deserialize<NativeRuntimeOptions>(
+                    runtimeOptionsClaim,
+                    new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                throw new WorkOrderRejectedException("Native runtime options are malformed.");
+            }
+            ValidateNativeOptions(runtimeOptions, mode);
+        }
+
         return new ValidatedWorkOrder(
             WorkOrderId: Claim("wid"),
             RequestingUserId: requestingUser,
@@ -175,6 +194,29 @@ public sealed class WorkOrderValidator
             CorrelationId: Claim("cid"),
             Nonce: nonce,
             RuntimeSessionId: principal.FindFirst("rsid")?.Value,
-            RuntimeModel: principal.FindFirst("rmodel")?.Value);
+            RuntimeModel: principal.FindFirst("rmodel")?.Value,
+            RuntimeOptions: runtimeOptions);
+    }
+
+    private static void ValidateNativeOptions(NativeRuntimeOptions? options, string mode)
+    {
+        if (options is null) throw new WorkOrderRejectedException("Native runtime options are missing.");
+        if (options.Action is not ("turn" or "review"))
+            throw new WorkOrderRejectedException("Native runtime action is not allowed.");
+        if (options.CollaborationMode is not ("default" or "plan"))
+            throw new WorkOrderRejectedException("Native collaboration mode is not allowed.");
+        if (options.Effort is not null && options.Effort is not
+            ("minimal" or "low" or "medium" or "high" or "xhigh" or "max" or "ultra"))
+            throw new WorkOrderRejectedException("Native reasoning effort is not allowed.");
+        if (options.Personality is not ("none" or "friendly" or "pragmatic"))
+            throw new WorkOrderRejectedException("Native personality is not allowed.");
+        if (options.ApprovalPolicy is not ("on-request" or "untrusted"))
+            throw new WorkOrderRejectedException("Native approval policy is not allowed.");
+        if (options.Sandbox is not ("readOnly" or "workspaceWrite"))
+            throw new WorkOrderRejectedException("Native sandbox is not allowed.");
+        if (!string.Equals(options.Sandbox, mode, StringComparison.Ordinal))
+            throw new WorkOrderRejectedException("Native sandbox does not match the signed work-order mode.");
+        if (options.ReviewTarget != "uncommittedChanges")
+            throw new WorkOrderRejectedException("Native review target is not allowed.");
     }
 }

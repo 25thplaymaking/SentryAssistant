@@ -116,6 +116,13 @@ class RuntimeTurn:
     #: Named workstation workspace.  This is never a raw local path; the Node
     #: resolves it against its own allowlisted registry.
     workspace_id: str | None = None
+    #: Small, validated controls for a native runtime (for example Codex plan
+    #: mode or a review action). They are persisted and signed by the Gateway;
+    #: arbitrary client data must never be placed here.
+    native_options: dict[str, Any] = field(default_factory=dict)
+    #: User-maintained profile memory. Runtime adapters decide how to inject it
+    #: without allowing it to override security or tool policy.
+    profile_memory: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
