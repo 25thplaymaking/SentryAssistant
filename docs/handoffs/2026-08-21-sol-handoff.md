@@ -46,6 +46,28 @@ picker so it again mirrors all 278 interactive Nous models. DeepSeek remains the
 default for every automatic path; restoring catalogue visibility did not alter
 the selection.
 
+### End-user rollout — complete
+
+- The final runtime feature heads are SentryAssistant `f869979` and SentryWebUI
+  `38da7f4e` (followed only by this documentation record in SentryAssistant).
+  Both are present in the server bare repositories, live checkouts, and GitHub
+  mirrors.
+- Existing owner runtime configuration and both provisioning seeds expose the
+  same 278-model interactive Nous catalogue plus the friendly alias. Hermes and
+  Gateway each expose 280 picker choices including `hermes-agent`.
+  `deepseek/deepseek-v4-flash` remains selected for chat, delegation,
+  compression, and background review. Sol is optional only.
+- WebUI `38da7f4e` closes the hosted browser-update gap: Compose builds now
+  derive a deterministic source version when no release tag is supplied. The
+  public service worker is live with cache key
+  `hermes-shell-source-4839c724ae33ef3d`, versioned asset URLs, and
+  `Cache-Control: no-store`, so existing installed/browser clients discover the
+  new bundle rather than remaining on `hermes-shell-unknown`.
+- Final live verification: all six services are running; Gateway, Hermes,
+  Postgres, server-control, and WebUI are healthy; public `/sw.js` returns 200;
+  the WebUI PWA regression suite is 47/47. The pre-existing `stress` runtime is
+  an isolated test profile and is not an end-user profile.
+
 ---
 
 ## 1. State of the world (verified end of day)
@@ -53,11 +75,14 @@ the selection.
 - **Live and healthy on grain** (`bishop@205.209.116.114`): gateway, webui,
   hermes (with healthcheck), postgres, cloudflared, server-control-mcp. Public
   edge `https://sentry.frontir.solutions` serves the current bundle.
-- **Deployed heads**: SentryAssistant `98d189f` (branch `25vid/sentry-foundation`),
-  SentryWebUI `df1ac48f` (branch `frontir`) — identical across local clone,
-  `/srv/git/*` bare repos, `/srv/sentry/*` checkouts, and GitHub mirrors.
-- **Test state at those heads**: gateway 505 passed; WebUI full suite on grain
-  **15024 passed, 0 failed, 0 errors** (first fully green run ever).
+- **Deployed feature heads**: SentryAssistant `f869979` (branch
+  `25vid/sentry-foundation`, followed only by this documentation update),
+  SentryWebUI `38da7f4e` (branch `frontir`) — mirrored across the local clone,
+  `/srv/git/*` bare repos, `/srv/sentry/*` checkouts, and GitHub.
+- **Test state**: the final application-code suite on grain completed with
+  **14993 passed, 268 skips, 2 xfailed, 1 xpassed, 0 failed, 0 errors**. The
+  subsequent Docker-only browser-version change passed its focused PWA suite
+  **47/47** and was proven in the rebuilt public image.
 - **Unattended operation is armed**: `sentry-update.service` (boot; fetches the
   `github` remote explicitly — push to GitHub, restart the unit or reboot, and
   grain rolls forward with no workstation), `sentry-import.timer` (daily
@@ -94,15 +119,17 @@ the selection.
    gateway scheduler, deployment/logs/backups). Deployment audit: all green;
    backup gap closed same day. The other two produced the queues below.
 
-## 3. NOT yet deployed — Sol's first task
+## 3. Completed continuation work (historical task brief)
 
-### 3a. Gateway: commit `eb50e5d` — pushed, migration applied, REBUILD PENDING
+Everything in this section is deployed. The original task detail remains below
+as an audit trail; it is not an active queue.
+
+### 3a. Gateway: commit `eb50e5d` — deployed and verified
 
 Fixes all five review-confirmed cron bugs, 515 tests green. Migration
-`014_cron_claim.sql` is **already applied** to the live database (so the boot
-updater auto-deploying this commit is safe); what remains is only
-`docker compose build gateway && up -d gateway` on grain — or simply the next
-reboot, since sentry-update will do it.
+`014_cron_claim.sql` is applied to the live database. The Gateway was rebuilt,
+and invalid-schedule rejection plus a real every-minute Hermes job were
+verified end to end.
 
 1. Schedules validated on create/update (422 on garbage; before, an invalid
    schedule was stored enabled and silently never fired).
@@ -118,18 +145,11 @@ reboot, since sentry-update will do it.
    retries instead of freezing the loop forever. (Note: `asyncio.wait_for`
    specifically was avoided — 3.11 swallowed-cancellation bug hung the suite.)
 
-Deploy: on grain, `cd /srv/sentry/repo && git pull --ff-only && git push
-github 25vid/sentry-foundation` (already pushed to both remotes from the
-workstation), then `cd deploy/linux && docker compose build gateway && docker
-compose up -d gateway`. Re-verify with a throwaway every-minute job like the
-one used on finalization day.
+### 3b. WebUI review fixes — deployed and verified
 
-### 3b. WebUI: `stash@{0}` "review-fixes" on the local clone (NOT committed)
-
-In `C:\Users\Bryce\Desktop\SentryWebUI` — working tree clean at df1ac48f, the
-day's second wave of review fixes is parked in **`git stash list` → stash@{0}**.
-Apply with `git stash pop`. It contains (all edits complete, mid-verification
-when work stopped):
+The second-wave review fixes were recovered from the historical stash,
+completed across all locales, committed as `3afce1d4`, and deployed. They
+include:
 
 - `_sentry_cron_view` ships `schedule_display` + object `schedule
   {kind, expression}` — without this, **editing any Gateway job shows an empty
@@ -156,21 +176,16 @@ when work stopped):
 - Regeneration token tests added to `test_sentry_token_no_shared_fallback.py`
   (the registered-session-token path regeneration depends on was unpinned).
 
-**Open triage** (where I was interrupted): with the stash applied, running
-`tests/test_sprint3.py` locally showed 4 failures
-(`*_rejects_workspace_outside_trusted_root` returning 200 not 400). Unknown
-whether stash-caused or a local-Windows artifact — the same tests passed on
-grain at df1ac48f. Triage: pop the stash, run that file at clean HEAD vs with
-changes, on grain if possible. Nothing in the stash touches workspace
-validation on inspection, but verify, don't assume. Then: locale tests +
-`node tests/frontir_layer_harness.mjs` + focused sentry files, commit, push,
-rebuild webui on grain, and re-run the full suite there (expect ~15040+ green).
+The four workspace-validation failures were reproduced at the clean prior head
+on Windows and passed on grain, confirming an environment-only discrepancy.
+The browser-layer harness passed 39/39 and the required full grain suite
+finished with zero failures or errors.
 
-## 4. Bryce's new request: expose the full Nous model catalog
+## 4. Full Nous model catalogue — completed
 
-His words: now that Nous OAuth is connected, "a way to switch between all the
-model offerings would be beneficial; we peeled that back during hosting, but
-now it makes sense."
+The picker now exposes the full interactive, tool-capable Nous catalogue while
+keeping DeepSeek selected. The implementation deliberately uses the existing
+route registry; no second catalogue or selection system was added.
 
 The design already supports this with **zero new code** — the route table IS
 the registry (`docs/plans/2026-08-18-model-routing-design.md`):
