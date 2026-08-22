@@ -127,6 +127,10 @@ class RuntimeTurn:
     #: mode or a review action). They are persisted and signed by the Gateway;
     #: arbitrary client data must never be placed here.
     native_options: dict[str, Any] = field(default_factory=dict)
+    #: Optional owner-selected Hermes target. The chat route resolves this
+    #: against current linked workspaces or Server Control's allowlist before it
+    #: reaches a runtime; arbitrary paths and service names never pass through.
+    target_context: dict[str, Any] = field(default_factory=dict)
     #: Images are validated and bounded by the authenticated chat route before
     #: an adapter sees them. Adapters translate this neutral data URL into the
     #: selected runtime's native input shape.

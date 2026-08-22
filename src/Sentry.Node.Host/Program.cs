@@ -86,7 +86,9 @@ var credentialSession = new Sentry.Node.Gateway.NodeCredentialSession(
 var registrations = config.Workspaces.Select(w => new WorkspaceRegistration(
     w.WorkspaceId,
     w.RootPath,
-    new HashSet<string>(w.AllowedHarnesses, StringComparer.OrdinalIgnoreCase),
+    new HashSet<string>(
+        w.AllowedHarnesses.Append("integrations"),
+        StringComparer.OrdinalIgnoreCase),
     new HashSet<string>(w.AllowedModes, StringComparer.Ordinal))).ToList();
 
 WorkspaceRegistry registry;
@@ -109,6 +111,9 @@ var harnesses = new Dictionary<string, IHarnessAdapter>(StringComparer.OrdinalIg
 };
 var nativeRuntimes = new Dictionary<string, Sentry.Node.Gateway.NativeRuntimeRegistration>(
     StringComparer.OrdinalIgnoreCase);
+var integrations = new IntegrationAdapter();
+harnesses["integrations"] = integrations;
+nativeRuntimes["integrations"] = integrations.Registration();
 if (!string.IsNullOrWhiteSpace(config.CodexExecutable)
     && File.Exists(config.CodexExecutable))
 {

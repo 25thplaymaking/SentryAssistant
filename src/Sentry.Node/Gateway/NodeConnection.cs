@@ -29,7 +29,11 @@ public sealed record NativeRuntimeOptions(
     [property: JsonPropertyName("personality")] string Personality = "pragmatic",
     [property: JsonPropertyName("approval_policy")] string ApprovalPolicy = "on-request",
     [property: JsonPropertyName("sandbox")] string Sandbox = "workspaceWrite",
-    [property: JsonPropertyName("review_target")] string ReviewTarget = "uncommittedChanges");
+    [property: JsonPropertyName("review_target")] string ReviewTarget = "uncommittedChanges",
+    [property: JsonPropertyName("provider")] string? Provider = null,
+    [property: JsonPropertyName("provider_session_id")] string? ProviderSessionId = null,
+    [property: JsonPropertyName("ide")] string? Ide = null,
+    [property: JsonPropertyName("watch_seconds")] int WatchSeconds = 0);
 
 public sealed record WorkspaceRegistrationRequest(
     [property: JsonPropertyName("workspace_id")] string WorkspaceId,

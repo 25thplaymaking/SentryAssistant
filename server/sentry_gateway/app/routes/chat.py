@@ -31,6 +31,7 @@ from ..agent_runtime.hermes import UnknownProfileError
 from ..actions.recorder import ActionRecorder
 from ..audit.service import AuditEvent, AuditService, Decision
 from .deps import Caller, require_caller
+from .integrations import validate_sentry_target
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -82,6 +83,14 @@ class NativeTurnOptions(BaseModel):
     review_target: Literal["uncommittedChanges"] = "uncommittedChanges"
 
 
+class ChatTarget(BaseModel):
+    kind: Literal["workspace", "service"]
+    node_id: str | None = Field(default=None, max_length=100)
+    workspace_id: str | None = Field(default=None, max_length=200)
+    service_id: str | None = Field(default=None, max_length=200)
+    name: str | None = Field(default=None, max_length=200)
+
+
 class ChatTurnRequest(BaseModel):
     prompt: str = Field(min_length=1)
     #: Continue an existing conversation. Absent on the first turn.
@@ -102,6 +111,9 @@ class ChatTurnRequest(BaseModel):
     #: Present only for a selected native runtime. Every value is allowlisted
     #: above, persisted with the work order, and included in its signed claim.
     native_options: NativeTurnOptions | None = None
+    #: A UI-selected Hermes location. The route resolves it from current
+    #: owner-scoped capabilities before adding it to runtime instructions.
+    target: ChatTarget | None = None
     #: Inline raster images from the authenticated WebUI upload path.
     images: list[ChatImage] = Field(default_factory=list, max_length=_MAX_IMAGE_COUNT)
 
@@ -532,6 +544,22 @@ async def chat_turn(
         if is_native_codex
         else {}
     )
+    target_context = await validate_sentry_target(
+        request,
+        caller,
+        body.target.model_dump(exclude_none=True) if body.target else None,
+    )
+    if is_native_codex and target_context:
+        if target_context.get("kind") != "workspace":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Native Codex turns can target a linked workspace, not a server service.",
+            )
+        if body.workspace_id and target_context.get("workspace_id") != body.workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The selected Codex workspace and Sentry target must match.",
+            )
 
     audit = _audit_service(request)
     if audit is None:
@@ -582,6 +610,7 @@ async def chat_turn(
         experience=effective_experience,
         workspace_id=body.workspace_id,
         native_options=native_options,
+        target_context=target_context,
         images=tuple(RuntimeImage(data_url=image.data_url) for image in body.images),
         profile_memory=await _profile_memory(request, caller.profile_id),
     )

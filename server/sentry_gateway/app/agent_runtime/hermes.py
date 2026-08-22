@@ -541,6 +541,20 @@ class HermesRuntime(AgentRuntime):
         # The route has already refused any model this profile does not
         # advertise, so an unroutable value cannot reach here.
         instructions = _EXPERIENCE_INSTRUCTIONS[request.experience]
+        if request.target_context:
+            target_json = json.dumps(
+                request.target_context,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).replace("<", "\\u003c").replace(">", "\\u003e")
+            instructions = (
+                f"{instructions}\n\n"
+                "The user explicitly selected the following Sentry target for this turn. "
+                "Use the exact allowlisted target when a workstation or server-control tool is relevant; "
+                "do not substitute another machine, workspace, service, or raw path. The selection is "
+                "context, not permission to perform an action the user did not request.\n"
+                f"<sentry-target>{target_json}</sentry-target>"
+            )
         if request.profile_memory:
             memory = "\n\n".join(
                 json.dumps(
@@ -582,6 +596,7 @@ class HermesRuntime(AgentRuntime):
             "metadata": {
                 "sentry_correlation_id": request.correlation_id,
                 "sentry_experience": request.experience.value,
+                "sentry_target_kind": str(request.target_context.get("kind") or ""),
             },
         }
         if request.experience is RuntimeExperience.CHAT:

@@ -102,6 +102,35 @@ class FakePool:
         return Ctx()
 
 
+class TargetPool(FakePool):
+    """Adds the owner-scoped workspace lookup used by explicit Sentry targets."""
+
+    def acquire(self):
+        pool = self
+
+        class Ctx:
+            async def __aenter__(self):
+                class Conn:
+                    async def execute(self, sql, *args):
+                        pool.executed.append((sql, args))
+
+                    async def fetchrow(self, sql, *args):
+                        if "FROM execution_nodes" in sql:
+                            return {
+                                "id": UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+                                "name": "Bryce's PC",
+                                "workspace_id": "server-work",
+                            }
+                        return None
+
+                return Conn()
+
+            async def __aexit__(self, *_):
+                return False
+
+        return Ctx()
+
+
 def build_client(runtime, pool=None) -> TestClient:
     app = FastAPI()
     app.include_router(chat_routes.router)
@@ -141,6 +170,29 @@ class TestRouting:
         resp = client.post("/api/chat/turn", json={"prompt": "hi"}, headers=bearer(PROFILE_A))
         assert resp.status_code == 200
         assert runtime.turns == [(PROFILE_A, "hi")]
+
+    def test_workspace_target_is_resolved_and_forwarded_to_hermes(self):
+        runtime = FakeRuntime([PROFILE_A])
+        client = build_client(runtime, pool=TargetPool())
+        response = client.post(
+            "/api/chat/turn",
+            json={
+                "prompt": "Inspect the selected service workspace",
+                "target": {
+                    "kind": "workspace",
+                    "node_id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+                    "workspace_id": "server-work",
+                },
+            },
+            headers=bearer(PROFILE_A),
+        )
+        assert response.status_code == 200
+        assert runtime.requests[0].target_context == {
+            "kind": "workspace",
+            "node_id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+            "node_name": "Bryce's PC",
+            "workspace_id": "server-work",
+        }
 
     def test_two_profiles_route_to_their_own_agents(self):
         runtime = FakeRuntime([PROFILE_A, PROFILE_B])

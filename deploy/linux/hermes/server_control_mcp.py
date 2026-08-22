@@ -252,9 +252,26 @@ async def http_mcp(request: web.Request) -> web.Response:
     return web.json_response(response or {}, status=202 if response is None else 200)
 
 
+async def http_status(_: web.Request) -> web.Response:
+    """Internal read-only service inventory for the authenticated Gateway.
+
+    This listener is exposed only on the private Compose network. The Server
+    Control bearer remains inside this container and is never returned.
+    """
+    try:
+        value = await asyncio.to_thread(server_api, "/status")
+        return web.json_response(value)
+    except Exception as error:
+        return web.json_response(
+            {"available": False, "services": [], "error": str(error)[:200]},
+            status=503,
+        )
+
+
 def run_http() -> None:
     app = web.Application(client_max_size=65536)
     app.router.add_post("/mcp", http_mcp)
+    app.router.add_get("/status", http_status)
     app.router.add_get("/health", lambda _: web.json_response({"status": "healthy"}))
     web.run_app(app, host="0.0.0.0", port=int(os.environ.get("SERVER_CONTROL_MCP_PORT", "8765")))
 

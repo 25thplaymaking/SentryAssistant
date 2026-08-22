@@ -14,7 +14,7 @@ public class WorkOrderValidatorTests
         NodeId: "node-1",
         NodeOwnerUserId: "bryce",
         RegisteredWorkspaces: new HashSet<string> { "ws-sentry", "ws-25vid" },
-        AllowedHarnesses: new HashSet<string> { "codex", "claude" },
+        AllowedHarnesses: new HashSet<string> { "codex", "claude", "integrations" },
         TeamMembers: new HashSet<string> { "bryce", "colleague" });
 
     /// <summary>Mirrors what the Gateway's sign_work_order produces.</summary>
@@ -100,6 +100,34 @@ public class WorkOrderValidatorTests
         Assert.Equal("plan", order.RuntimeOptions.CollaborationMode);
         Assert.Equal("high", order.RuntimeOptions.Effort);
         Assert.Equal("readOnly", order.RuntimeOptions.Sandbox);
+    }
+
+    [Fact]
+    public void AcceptsAConstrainedIntegrationSessionRead()
+    {
+        var order = new WorkOrderValidator(Key, Expectation()).Validate(Sign(
+            harness: "integrations",
+            mode: "readOnly",
+            runtimeOptions: """{"action":"sessionRead","sandbox":"readOnly","provider":"codex","provider_session_id":"11111111-2222-3333-4444-555555555555"}"""));
+
+        Assert.Equal("integrations", order.Harness);
+        Assert.Equal("sessionRead", order.RuntimeOptions!.Action);
+        Assert.Equal("codex", order.RuntimeOptions.Provider);
+    }
+
+    [Fact]
+    public void RefusesIntegrationWritesAndUnknownProviderSessions()
+    {
+        Assert.Throws<WorkOrderRejectedException>(() =>
+            new WorkOrderValidator(Key, Expectation()).Validate(Sign(
+                harness: "integrations",
+                mode: "workspaceWrite",
+                runtimeOptions: """{"action":"workspaceInspect","sandbox":"workspaceWrite"}""")));
+        Assert.Throws<WorkOrderRejectedException>(() =>
+            new WorkOrderValidator(Key, Expectation()).Validate(Sign(
+                harness: "integrations",
+                mode: "readOnly",
+                runtimeOptions: """{"action":"sessionRead","sandbox":"readOnly","provider":"other","provider_session_id":"x"}""")));
     }
 
     [Fact]

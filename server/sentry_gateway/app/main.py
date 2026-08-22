@@ -32,6 +32,7 @@ from .routes import auth as auth_routes
 from .routes import chat as chat_routes
 from .routes import cron as cron_routes
 from .routes import kanban as kanban_routes
+from .routes import integrations as integrations_routes
 from .routes import memory as memory_routes
 from .routes import nodes as nodes_routes
 from .routes import profiles as profiles_routes
@@ -165,6 +166,7 @@ app.include_router(auth_routes.router)
 app.include_router(chat_routes.router)
 app.include_router(profiles_routes.router)
 app.include_router(kanban_routes.router)
+app.include_router(integrations_routes.router)
 app.include_router(skills_routes.router)
 app.include_router(memory_routes.router)
 app.include_router(agent_messages_routes.router)

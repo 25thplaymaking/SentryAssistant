@@ -181,7 +181,7 @@ public sealed class WorkOrderValidator
             {
                 throw new WorkOrderRejectedException("Native runtime options are malformed.");
             }
-            ValidateNativeOptions(runtimeOptions, mode);
+            ValidateNativeOptions(runtimeOptions, mode, harness);
         }
 
         return new ValidatedWorkOrder(
@@ -200,9 +200,35 @@ public sealed class WorkOrderValidator
             InputImagesDigest: principal.FindFirst("imgsha")?.Value);
     }
 
-    private static void ValidateNativeOptions(NativeRuntimeOptions? options, string mode)
+    private static void ValidateNativeOptions(
+        NativeRuntimeOptions? options, string mode, string harness)
     {
         if (options is null) throw new WorkOrderRejectedException("Native runtime options are missing.");
+        if (string.Equals(harness, "integrations", StringComparison.OrdinalIgnoreCase))
+        {
+            if (mode != "readOnly" || options.Sandbox != "readOnly")
+                throw new WorkOrderRejectedException("Integration actions are read-only work orders.");
+            if (options.Action is not (
+                "sessionsSync" or "sessionRead" or "sessionWatch"
+                or "workspaceInspect" or "openIde"))
+                throw new WorkOrderRejectedException("Integration action is not allowed.");
+            if (options.Provider is not null && options.Provider is not ("codex" or "claude" or "all"))
+                throw new WorkOrderRejectedException("Integration provider is not allowed.");
+            if (options.ProviderSessionId is { Length: > 160 })
+                throw new WorkOrderRejectedException("Provider session identifier is too long.");
+            if (options.Ide is not null && options.Ide is not ("vscode" or "cursor"))
+                throw new WorkOrderRejectedException("IDE is not allowed.");
+            if (options.WatchSeconds is < 0 or > 20)
+                throw new WorkOrderRejectedException("Live watch duration is not allowed.");
+            if ((options.Action is "sessionRead" or "sessionWatch")
+                && (options.Provider is not ("codex" or "claude")
+                    || string.IsNullOrWhiteSpace(options.ProviderSessionId)))
+                throw new WorkOrderRejectedException(
+                    "A supported provider and exact session identifier are required.");
+            if (options.Action == "openIde" && options.Ide is not ("vscode" or "cursor"))
+                throw new WorkOrderRejectedException("An available IDE must be selected.");
+            return;
+        }
         if (options.Action is not ("turn" or "review"))
             throw new WorkOrderRejectedException("Native runtime action is not allowed.");
         if (options.CollaborationMode is not ("default" or "plan"))
