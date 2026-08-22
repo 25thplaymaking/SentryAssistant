@@ -34,6 +34,13 @@ The immediate queue in sections 3 and 4 is complete. Section 6 remains an
 optional follow-on polish queue; Kanban remains the separately scoped product
 decision described in section 5.
 
+Follow-up: at Bryce's request, chat, delegation, compression, and background
+review now default to the least expensive interactive DeepSeek route,
+`deepseek/deepseek-v4-flash`. `openai/gpt-5.6-sol` and its `-pro` variant were
+removed from the owner live registry and both provisioning seeds. The earlier
+Sol turn above remains historical verification evidence only; it never changed
+the default.
+
 ---
 
 ## 1. State of the world (verified end of day)

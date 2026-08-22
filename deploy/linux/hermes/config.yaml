@@ -15,11 +15,10 @@ model:
   # Pin Nous explicitly. OAuth lives in Hermes's auth store and is refreshed by
   # Hermes; environment-key autodetection is not part of this deployment.
   provider: nous
-  # Stable, tool-capable, 1.3M-context model selected from the live Nous
-  # catalogue on 2026-08-21. At the Plus-plan rate it is approximately
-  # $0.06/M prompt and $0.14/M completion tokens. The dated slug prevents a
-  # silent model change from altering production behavior.
-  default: deepseek/deepseek-v4-flash-0731
+  # Cost-optimized, tool-capable DeepSeek selected from the live Nous catalogue
+  # on 2026-08-21. It is the least expensive interactive DeepSeek route while
+  # retaining the full assistant/tool contract.
+  default: deepseek/deepseek-v4-flash
   context_length: 131072
 
 # One operational agent at a time. Tardia's raw proxy calls do not consume an
@@ -34,7 +33,7 @@ agent:
 
 delegation:
   provider: nous
-  model: deepseek/deepseek-v4-flash-0731
+  model: deepseek/deepseek-v4-flash
   max_iterations: 12
   max_concurrent_children: 1
   max_spawn_depth: 1
@@ -46,11 +45,11 @@ auxiliary:
   transient_retries: 1
   compression:
     provider: nous
-    model: deepseek/deepseek-v4-flash-0731
+    model: deepseek/deepseek-v4-flash
     reasoning_effort: low
   background_review:
     provider: nous
-    model: deepseek/deepseek-v4-flash-0731
+    model: deepseek/deepseek-v4-flash
     reasoning_effort: low
   vision:
     provider: nous
@@ -147,7 +146,7 @@ platforms:
       model_routes:
         # Friendly alias retained as the deployment default.
         deepseek-v4-flash:
-          model: deepseek/deepseek-v4-flash-0731
+          model: deepseek/deepseek-v4-flash
           provider: nous
         # Interactive Nous catalog captured from the authenticated /v1/models
         # endpoint. Embedding-only and batch-only entries are intentionally
@@ -256,9 +255,6 @@ platforms:
           provider: nous
         "openai/gpt-5.6-terra":
           model: "openai/gpt-5.6-terra"
-          provider: nous
-        "openai/gpt-5.6-sol-pro":
-          model: "openai/gpt-5.6-sol-pro"
           provider: nous
         "x-ai/grok-4.5":
           model: "x-ai/grok-4.5"
@@ -973,9 +969,6 @@ platforms:
           provider: nous
         "anthropic/claude-haiku-4.5":
           model: "anthropic/claude-haiku-4.5"
-          provider: nous
-        "openai/gpt-5.6-sol":
-          model: "openai/gpt-5.6-sol"
           provider: nous
         "meituan/longcat-2.0:free":
           model: "meituan/longcat-2.0:free"

@@ -15,10 +15,12 @@ evidence.
 - Chat: WebUI → Gateway `/api/chat/turn` → the caller's own Hermes over
   `/v1/responses`. Sentry turns fail closed without a per-user token — there
   is no shared-credential fallback.
-- Default inference: Nous Portal OAuth, `deepseek-v4-flash-0731`. The model
-  registry now publishes all 278 interactive, tool-capable, non-batch models
-  advertised by the authenticated Nous catalogue, plus the friendly default
-  alias. A raw Nous proxy for host-local clients (Tardia) is published on
+- Default inference: Nous Portal OAuth, `deepseek-v4-flash`, for chat,
+  delegation, compression, and background review. It was the least expensive
+  interactive, tool-capable DeepSeek route in the authenticated catalogue when
+  selected. The registry publishes 276 compatible catalogue models plus the
+  friendly default alias; both GPT-5.6 Sol variants are deliberately excluded.
+  A raw Nous proxy for host-local clients (Tardia) is published on
   `127.0.0.1:8645`. Local Qwen (`sentry-llama-1`) is a stopped, manual
   emergency option.
 - The desktop shell binds IPv6 loopback forwards (IPv4 loopback is broken on
@@ -82,10 +84,9 @@ and live owner profile (0d1278f). The live pre-catalogue config is retained at
   The frontir browser-layer harness remained 39/39.
 - Live: gateway `/health/ready` ready, all containers healthy, scheduler
   fired a real job through Hermes/deepseek and recorded `ok` + the reply.
-  Hermes and Gateway each advertise 280 unique picker entries (278 catalogue
-  models, the friendly alias, and `hermes-agent`), with batch and embedding
-  entries absent. A real Gateway turn selected `openai/gpt-5.6-sol` and the
-  completion evidence reported that exact model.
+  Hermes and Gateway each advertise 278 unique picker entries (276 catalogue
+  models, the friendly alias, and `hermes-agent`), with batch, embedding, and
+  GPT-5.6 Sol entries absent.
 
 ## Deploy loop (corrected)
 
