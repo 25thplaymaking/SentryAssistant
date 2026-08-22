@@ -44,6 +44,7 @@ public interface IInteractiveHarnessAdapter : IHarnessAdapter
         string runtimeSessionId,
         string model,
         Sentry.Node.Gateway.NativeRuntimeOptions options,
+        IReadOnlyList<Sentry.Node.Gateway.RuntimeImageInput> inputImages,
         IInteractiveHarnessBridge bridge,
         CancellationToken cancellationToken);
 }

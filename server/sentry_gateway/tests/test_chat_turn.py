@@ -24,6 +24,10 @@ KEY = "chat-test-signing-key-padded-well-past-the-32-byte-minimum"
 PROFILE_A = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 PROFILE_B = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 UNPROVISIONED = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+PNG_DATA_URL = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 def _now():
@@ -36,6 +40,7 @@ class FakeRuntime:
     def __init__(self, known_profiles):
         self._known = set(known_profiles)
         self.turns: list[tuple[UUID, str]] = []
+        self.requests = []
         self.sessions_created: list[UUID] = []
 
     def register(self, instance):
@@ -56,6 +61,7 @@ class FakeRuntime:
     async def send_turn(self, request):
         if request.profile_id not in self._known:
             raise UnknownProfileError(str(request.profile_id))
+        self.requests.append(request)
         self.turns.append((request.profile_id, request.prompt))
         yield RuntimeEvent(
             type=RuntimeEventType.MESSAGE,
@@ -152,6 +158,36 @@ class TestRouting:
         assert "hello" in resp.text
         assert "[DONE]" in resp.text
         assert resp.headers.get("x-sentry-correlation-id")
+
+    def test_valid_pasted_image_reaches_the_selected_runtime(self):
+        runtime = FakeRuntime([PROFILE_A])
+        client = build_client(runtime, pool=FakePool())
+
+        resp = client.post(
+            "/api/chat/turn",
+            json={"prompt": "What is in this image?", "images": [{"data_url": PNG_DATA_URL}]},
+            headers=bearer(PROFILE_A),
+        )
+
+        assert resp.status_code == 200
+        assert len(runtime.requests) == 1
+        assert runtime.requests[0].images[0].data_url == PNG_DATA_URL
+
+    def test_non_image_data_url_is_refused_before_runtime_execution(self):
+        runtime = FakeRuntime([PROFILE_A])
+        client = build_client(runtime, pool=FakePool())
+
+        resp = client.post(
+            "/api/chat/turn",
+            json={
+                "prompt": "Read this",
+                "images": [{"data_url": "data:text/plain;base64,aGVsbG8="}],
+            },
+            headers=bearer(PROFILE_A),
+        )
+
+        assert resp.status_code == 422
+        assert runtime.requests == []
 
 
 class TestFailClosed:

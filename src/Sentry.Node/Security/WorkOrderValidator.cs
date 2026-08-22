@@ -31,7 +31,8 @@ public sealed record ValidatedWorkOrder(
     string Nonce,
     string? RuntimeSessionId,
     string? RuntimeModel,
-    NativeRuntimeOptions? RuntimeOptions);
+    NativeRuntimeOptions? RuntimeOptions,
+    string? InputImagesDigest);
 
 /// <summary>
 /// Validates a Gateway-signed work order before anything executes.
@@ -195,7 +196,8 @@ public sealed class WorkOrderValidator
             Nonce: nonce,
             RuntimeSessionId: principal.FindFirst("rsid")?.Value,
             RuntimeModel: principal.FindFirst("rmodel")?.Value,
-            RuntimeOptions: runtimeOptions);
+            RuntimeOptions: runtimeOptions,
+            InputImagesDigest: principal.FindFirst("imgsha")?.Value);
     }
 
     private static void ValidateNativeOptions(NativeRuntimeOptions? options, string mode)

@@ -29,6 +29,7 @@ public class WorkOrderValidatorTests
         string? runtimeSessionId = null,
         string? runtimeModel = null,
         string? runtimeOptions = null,
+        string? inputImagesDigest = null,
         int lifetimeMinutes = 15,
         string? nonce = null)
     {
@@ -52,6 +53,7 @@ public class WorkOrderValidatorTests
         if (runtimeSessionId is not null) claims.Add(new Claim("rsid", runtimeSessionId));
         if (runtimeModel is not null) claims.Add(new Claim("rmodel", runtimeModel));
         if (runtimeOptions is not null) claims.Add(new Claim("ropts", runtimeOptions));
+        if (inputImagesDigest is not null) claims.Add(new Claim("imgsha", inputImagesDigest));
 
         // notBefore is derived from expiry so a negative lifetime still produces a
         // structurally valid (but expired) token rather than failing construction.
@@ -98,6 +100,14 @@ public class WorkOrderValidatorTests
         Assert.Equal("plan", order.RuntimeOptions.CollaborationMode);
         Assert.Equal("high", order.RuntimeOptions.Effort);
         Assert.Equal("readOnly", order.RuntimeOptions.Sandbox);
+    }
+
+    [Fact]
+    public void PreservesSignedImageInputDigest()
+    {
+        var digest = new string('a', 64);
+        var order = new WorkOrderValidator(Key, Expectation()).Validate(Sign(inputImagesDigest: digest));
+        Assert.Equal(digest, order.InputImagesDigest);
     }
 
     [Fact]

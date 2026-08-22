@@ -17,6 +17,7 @@ from app.agent_runtime.base import (
     RuntimeEvent,
     RuntimeEventType,
     RuntimeExperience,
+    RuntimeImage,
     RuntimeTurn,
     SessionScope,
     WorkOrderProjection,
@@ -149,6 +150,42 @@ class TestSseParsing:
 
 
 class TestQuotedContext:
+    async def test_image_is_sent_as_a_real_responses_api_image_part(self):
+        captured: dict[str, object] = {}
+        calls: list[str] = []
+        data_url = (
+            "data:image/png;base64,"
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.url.path)
+            if request.url.path.endswith("/v1/sentry/vision"):
+                return httpx.Response(200, json={"descriptions": ["A bright red pixel."]})
+            captured.update(json.loads(request.content))
+            return httpx.Response(200, text="data: [DONE]\n")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        runtime = HermesRuntime({PROFILE: instance()}, client=client)
+        request = RuntimeTurn(
+            session_id="s-image",
+            profile_id=PROFILE,
+            prompt="Describe this image.",
+            correlation_id="corr-image",
+            images=(RuntimeImage(data_url=data_url),),
+        )
+        async for _ in runtime.send_turn(request):
+            pass
+        await client.aclose()
+
+        assert captured["input"][0]["role"] == "user"
+        assert "A bright red pixel." in captured["input"][0]["content"][0]["text"]
+        assert captured["input"][0]["content"][1] == {
+            "type": "input_image",
+            "image_url": data_url,
+        }
+        assert calls == ["/v1/sentry/vision", "/v1/responses"]
+
     async def test_untrusted_context_is_quoted_and_labelled(self):
         """Connector content must arrive as data, never as instruction."""
         captured: dict[str, object] = {}

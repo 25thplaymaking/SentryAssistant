@@ -151,7 +151,11 @@ public sealed class NodeWorker
                         StringComparison.Ordinal)
                     || dispatch.RuntimeOptions is null
                     || validated.RuntimeOptions is null
-                    || dispatch.RuntimeOptions != validated.RuntimeOptions)
+                    || dispatch.RuntimeOptions != validated.RuntimeOptions
+                    || !string.Equals(
+                        CodexAppServerAdapter.InputImagesDigest(dispatch.InputImages ?? []),
+                        validated.InputImagesDigest,
+                        StringComparison.OrdinalIgnoreCase))
                 {
                     result = Refusal("Native runtime dispatch metadata did not match its signed work order.");
                 }
@@ -175,6 +179,7 @@ public sealed class NodeWorker
                             validated.RuntimeSessionId,
                             validated.RuntimeModel,
                             validated.RuntimeOptions,
+                            dispatch.InputImages ?? [],
                             bridge,
                             runCancellation.Token);
                     }

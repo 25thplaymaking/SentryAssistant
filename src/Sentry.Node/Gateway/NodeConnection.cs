@@ -16,7 +16,11 @@ public sealed record DispatchedWorkOrder(
     [property: JsonPropertyName("correlation_id")] string CorrelationId,
     [property: JsonPropertyName("runtime_session_id")] string? RuntimeSessionId = null,
     [property: JsonPropertyName("runtime_model")] string? RuntimeModel = null,
-    [property: JsonPropertyName("runtime_options")] NativeRuntimeOptions? RuntimeOptions = null);
+    [property: JsonPropertyName("runtime_options")] NativeRuntimeOptions? RuntimeOptions = null,
+    [property: JsonPropertyName("input_images")] IReadOnlyList<RuntimeImageInput>? InputImages = null);
+
+public sealed record RuntimeImageInput(
+    [property: JsonPropertyName("data_url")] string DataUrl);
 
 public sealed record NativeRuntimeOptions(
     [property: JsonPropertyName("action")] string Action = "turn",

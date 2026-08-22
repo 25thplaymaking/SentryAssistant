@@ -246,6 +246,7 @@ class CodexWorkstationRuntime:
         work_order_id = uuid4()
         source_model = self.source_model(str(request.model))
         expires_at = datetime.now(timezone.utc) + timedelta(hours=12)
+        input_images = [{"data_url": image.data_url} for image in request.images]
 
         async with self._pool.acquire() as conn:
             async with conn.transaction():
@@ -256,10 +257,10 @@ class CodexWorkstationRuntime:
                         assigned_user_id, execution_node_id, harness, workspace_id,
                         title, prompt, state, mode, completion_criteria,
                         correlation_id, expires_at, runtime_session_id, runtime_model,
-                        runtime_options
+                        runtime_options, input_images
                     ) VALUES (
                         $1,$2,$3,NULL,$4,$2,$5,'codex',$6,
-                        $7,$8,'assigned',$9,$10,$11,$12,$13,$14,$15
+                        $7,$8,'assigned',$9,$10,$11,$12,$13,$14,$15,$16
                     )
                     """,
                     work_order_id,
@@ -277,6 +278,7 @@ class CodexWorkstationRuntime:
                     request.session_id,
                     source_model,
                     json.dumps(options),
+                    json.dumps(input_images),
                 )
                 await conn.execute(
                     """
@@ -456,7 +458,7 @@ class CodexWorkstationRuntime:
                     work_order_id,
                 )
                 await conn.execute(
-                    "UPDATE work_orders SET state = 'cancelled', updated_at = now() WHERE id = $1",
+                    "UPDATE work_orders SET state = 'cancelled', input_images = '[]'::jsonb, updated_at = now() WHERE id = $1",
                     work_order_id,
                 )
                 await conn.execute(

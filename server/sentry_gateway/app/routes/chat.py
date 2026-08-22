@@ -9,17 +9,20 @@ profile's agent (that would run one person's work inside another's).
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..agent_runtime.base import (
     RuntimeEvent,
     RuntimeExperience,
+    RuntimeImage,
     RuntimeTurn,
     SessionScope,
 )
@@ -30,6 +33,41 @@ from ..audit.service import AuditEvent, AuditService, Decision
 from .deps import Caller, require_caller
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024
+_MAX_IMAGE_COUNT = 5
+_MAX_IMAGE_DATA_URL_CHARS = ((_MAX_IMAGE_BYTES + 2) // 3) * 4 + 64
+_IMAGE_MAGIC = {
+    "image/png": lambda data: data.startswith(b"\x89PNG\r\n\x1a\n"),
+    "image/jpeg": lambda data: data.startswith(b"\xff\xd8\xff"),
+    "image/gif": lambda data: data.startswith((b"GIF87a", b"GIF89a")),
+    "image/webp": lambda data: data.startswith(b"RIFF") and data[8:12] == b"WEBP",
+}
+
+
+def _validated_image_bytes(data_url: str) -> bytes:
+    header, separator, encoded = str(data_url or "").partition(",")
+    mime = header.removeprefix("data:").removesuffix(";base64")
+    if not separator or header != f"data:{mime};base64" or mime not in _IMAGE_MAGIC:
+        raise ValueError("Images must be PNG, JPEG, GIF, or WebP data URLs.")
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("Image data must be valid base64.") from exc
+    if not decoded or len(decoded) > _MAX_IMAGE_BYTES:
+        raise ValueError("Each image must be between 1 byte and 20 MiB.")
+    if not _IMAGE_MAGIC[mime](decoded):
+        raise ValueError("Image bytes do not match the declared format.")
+    return decoded
+
+
+class ChatImage(BaseModel):
+    data_url: str = Field(min_length=1, max_length=_MAX_IMAGE_DATA_URL_CHARS)
+
+    @model_validator(mode="after")
+    def validate_image(self):
+        _validated_image_bytes(self.data_url)
+        return self
 
 
 class NativeTurnOptions(BaseModel):
@@ -64,6 +102,17 @@ class ChatTurnRequest(BaseModel):
     #: Present only for a selected native runtime. Every value is allowlisted
     #: above, persisted with the work order, and included in its signed claim.
     native_options: NativeTurnOptions | None = None
+    #: Inline raster images from the authenticated WebUI upload path.
+    images: list[ChatImage] = Field(default_factory=list, max_length=_MAX_IMAGE_COUNT)
+
+    @model_validator(mode="after")
+    def validate_images(self):
+        total = sum(len(_validated_image_bytes(image.data_url)) for image in self.images)
+        if total > _MAX_IMAGE_BYTES:
+            raise ValueError("Images may total at most 20 MiB per turn.")
+        if self.images and self.native_options and self.native_options.action == "review":
+            raise ValueError("Images can be sent to a Codex turn, not a repository review action.")
+        return self
 
 
 class NativeRuntimeResponse(BaseModel):
@@ -533,6 +582,7 @@ async def chat_turn(
         experience=effective_experience,
         workspace_id=body.workspace_id,
         native_options=native_options,
+        images=tuple(RuntimeImage(data_url=image.data_url) for image in body.images),
         profile_memory=await _profile_memory(request, caller.profile_id),
     )
 

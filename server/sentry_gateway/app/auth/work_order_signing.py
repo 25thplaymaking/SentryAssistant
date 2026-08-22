@@ -63,6 +63,7 @@ def sign_work_order(
     runtime_session_id: str | None = None,
     runtime_model: str | None = None,
     runtime_options: dict[str, Any] | None = None,
+    input_images_digest: str | None = None,
     ttl: timedelta = DEFAULT_WORK_ORDER_TTL,
     algorithm: str = "HS256",
 ) -> SignedWorkOrder:
@@ -93,6 +94,8 @@ def sign_work_order(
         claims["ropts"] = json.dumps(
             runtime_options, sort_keys=True, separators=(",", ":")
         )
+    if input_images_digest:
+        claims["imgsha"] = input_images_digest
     token = jwt.encode(
         claims,
         signing_key,

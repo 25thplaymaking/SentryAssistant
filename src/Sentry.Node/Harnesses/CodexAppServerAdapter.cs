@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -192,6 +193,7 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
         string runtimeSessionId,
         string model,
         NativeRuntimeOptions options,
+        IReadOnlyList<RuntimeImageInput> inputImages,
         IInteractiveHarnessBridge bridge,
         CancellationToken cancellationToken)
     {
@@ -203,6 +205,8 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
             return Failure($"Mode '{mode}' is not supported by native Codex.");
         if (!string.Equals(options.Sandbox, mode, StringComparison.Ordinal))
             return Failure("The selected Codex sandbox did not match the signed work order.");
+        if (options.Action == "review" && inputImages.Count > 0)
+            return Failure("Images cannot be attached to a Codex repository review action.");
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(_timeout);
@@ -211,6 +215,7 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
         string? turnId = null;
         var eventCount = 0;
         var finalText = new StringBuilder();
+        var imageDirectory = inputImages.Count > 0 ? CreateImageDirectory() : null;
 
         try
         {
@@ -276,14 +281,7 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
             else
             {
                 var turnParams = RuntimeSettings(threadId, model, mode, workspace.RootPath, options);
-                turnParams["input"] = new object[]
-                {
-                    new Dictionary<string, object?>
-                    {
-                        ["type"] = "text",
-                        ["text"] = prompt
-                    }
-                };
+                turnParams["input"] = BuildTurnInput(prompt, inputImages, imageDirectory);
                 turnResponse = await rpc.CallAsync(20, "turn/start", turnParams, token);
             }
             var turnError = ErrorMessage(turnResponse);
@@ -439,6 +437,125 @@ public sealed class CodexAppServerAdapter : IInteractiveHarnessAdapter
                 $"Native Codex failed: {exception.GetType().Name}: {exception.Message}",
                 threadId,
                 eventCount);
+        }
+        finally
+        {
+            DeleteImageDirectory(imageDirectory);
+        }
+    }
+
+    public static Dictionary<string, object?>[] BuildTurnInput(
+        string prompt,
+        IReadOnlyList<RuntimeImageInput> inputImages,
+        string? imageDirectory = null)
+    {
+        ArgumentNullException.ThrowIfNull(inputImages);
+        if (inputImages.Count > 5)
+            throw new ArgumentException("At most 5 images may be sent in one Codex turn.", nameof(inputImages));
+
+        var input = new List<Dictionary<string, object?>>
+        {
+            new() { ["type"] = "text", ["text"] = prompt }
+        };
+        long totalBytes = 0;
+        for (var index = 0; index < inputImages.Count; index++)
+        {
+            var image = inputImages[index];
+            var bytes = ValidateImageDataUrl(image.DataUrl);
+            totalBytes += bytes.Length;
+            if (totalBytes > 20L * 1024 * 1024)
+                throw new ArgumentException("Images may total at most 20 MiB per turn.", nameof(inputImages));
+            if (string.IsNullOrWhiteSpace(imageDirectory))
+                throw new ArgumentException("A private image directory is required.", nameof(imageDirectory));
+            Directory.CreateDirectory(imageDirectory);
+            var extension = ImageExtension(image.DataUrl);
+            var path = Path.Combine(imageDirectory, $"image-{index + 1}{extension}");
+            File.WriteAllBytes(path, bytes);
+            input.Add(new Dictionary<string, object?>
+            {
+                ["type"] = "localImage",
+                ["path"] = path
+            });
+        }
+        return [.. input];
+    }
+
+    public static string? InputImagesDigest(IReadOnlyList<RuntimeImageInput> inputImages)
+    {
+        if (inputImages.Count == 0) return null;
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        foreach (var image in inputImages)
+        {
+            hash.AppendData(Encoding.UTF8.GetBytes(image.DataUrl));
+            hash.AppendData([0]);
+        }
+        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    private static byte[] ValidateImageDataUrl(string dataUrl)
+    {
+        var comma = dataUrl.IndexOf(',');
+        if (comma <= 0) throw new ArgumentException("Image input must be a base64 data URL.");
+        var header = dataUrl[..comma];
+        var mime = header switch
+        {
+            "data:image/png;base64" => "image/png",
+            "data:image/jpeg;base64" => "image/jpeg",
+            "data:image/gif;base64" => "image/gif",
+            "data:image/webp;base64" => "image/webp",
+            _ => throw new ArgumentException("Image input must be PNG, JPEG, GIF, or WebP.")
+        };
+        byte[] bytes;
+        try { bytes = Convert.FromBase64String(dataUrl[(comma + 1)..]); }
+        catch (FormatException exception)
+        {
+            throw new ArgumentException("Image input contains invalid base64.", nameof(dataUrl), exception);
+        }
+        if (bytes.Length == 0 || bytes.Length > 20 * 1024 * 1024)
+            throw new ArgumentException("Each image must be between 1 byte and 20 MiB.", nameof(dataUrl));
+        var valid = mime switch
+        {
+            "image/png" => bytes.AsSpan().StartsWith(
+                new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a }),
+            "image/jpeg" => bytes.AsSpan().StartsWith(new byte[] { 0xff, 0xd8, 0xff }),
+            "image/gif" => bytes.AsSpan().StartsWith("GIF87a"u8) || bytes.AsSpan().StartsWith("GIF89a"u8),
+            "image/webp" => bytes.AsSpan().StartsWith("RIFF"u8) && bytes.Length >= 12 && bytes.AsSpan(8).StartsWith("WEBP"u8),
+            _ => false
+        };
+        if (!valid) throw new ArgumentException("Image bytes do not match the declared format.", nameof(dataUrl));
+        return bytes;
+    }
+
+    private static string ImageExtension(string dataUrl) => dataUrl[..dataUrl.IndexOf(',')] switch
+    {
+        "data:image/png;base64" => ".png",
+        "data:image/jpeg;base64" => ".jpg",
+        "data:image/gif;base64" => ".gif",
+        "data:image/webp;base64" => ".webp",
+        _ => throw new ArgumentException("Image input format is not supported.", nameof(dataUrl))
+    };
+
+    private static string CreateImageDirectory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "FrontirSentry", "codex-images");
+        return Path.Combine(root, Guid.NewGuid().ToString("N"));
+    }
+
+    private static void DeleteImageDirectory(string? imageDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(imageDirectory) || !Directory.Exists(imageDirectory)) return;
+        try
+        {
+            var allowedRoot = Path.GetFullPath(
+                Path.Combine(Path.GetTempPath(), "FrontirSentry", "codex-images"))
+                .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var target = Path.GetFullPath(imageDirectory);
+            if (target.StartsWith(allowedRoot, StringComparison.OrdinalIgnoreCase))
+                Directory.Delete(target, recursive: true);
+        }
+        catch
+        {
+            // Best-effort cleanup only; never hide the actual Codex result.
         }
     }
 

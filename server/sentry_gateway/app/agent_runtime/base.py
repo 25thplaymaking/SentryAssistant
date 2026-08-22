@@ -94,6 +94,13 @@ class RuntimeSession:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeImage:
+    """One validated inline image carried across the runtime boundary."""
+
+    data_url: str
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeTurn:
     session_id: str
     profile_id: UUID
@@ -120,6 +127,10 @@ class RuntimeTurn:
     #: mode or a review action). They are persisted and signed by the Gateway;
     #: arbitrary client data must never be placed here.
     native_options: dict[str, Any] = field(default_factory=dict)
+    #: Images are validated and bounded by the authenticated chat route before
+    #: an adapter sees them. Adapters translate this neutral data URL into the
+    #: selected runtime's native input shape.
+    images: tuple[RuntimeImage, ...] = ()
     #: User-maintained profile memory. Runtime adapters decide how to inject it
     #: without allowing it to override security or tool policy.
     profile_memory: tuple[tuple[str, str], ...] = ()

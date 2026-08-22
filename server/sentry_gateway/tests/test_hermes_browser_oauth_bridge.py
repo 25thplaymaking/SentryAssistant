@@ -54,6 +54,16 @@ def test_supported_device_providers_are_browser_connectable():
     assert "qwen-oauth" in bridge._OAUTH_UNAVAILABLE_REASONS
 
 
+def test_authenticated_sentry_vision_route_is_shipped_with_the_hermes_image():
+    bridge = _load_bridge()
+    bridge._initialize_subscription_routes = lambda _adapter: None
+    routes = bridge.build_routes(SimpleNamespace())
+    route_keys = {(method, path) for method, path, _handler in routes}
+
+    assert ("POST", "/v1/sentry/vision") in route_keys
+    assert bridge._MAX_IMAGE_BODY_BYTES > 20 * 1024 * 1024
+
+
 def test_openai_multiline_device_code_is_extracted_without_cli_output():
     bridge = _load_bridge()
     ready = _Ready()

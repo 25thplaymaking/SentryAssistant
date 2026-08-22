@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 # read at call time rather than copied, so adding a subsystem upstream needs no
 # change here.
 _MAX_BODY_BYTES = 64 * 1024
+_MAX_IMAGE_BODY_BYTES = 29 * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # In-flight OAuth flows
@@ -103,10 +104,12 @@ def _err(status: int, message: str, **extra: Any) -> web.Response:
     return web.json_response(body, status=status)
 
 
-async def _read_json(request: "web.Request") -> Tuple[Optional[Dict[str, Any]], Optional[web.Response]]:
+async def _read_json(
+    request: "web.Request", *, max_bytes: int = _MAX_BODY_BYTES
+) -> Tuple[Optional[Dict[str, Any]], Optional[web.Response]]:
     """Parse a JSON object body, or return an error response."""
-    raw = await request.content.read(_MAX_BODY_BYTES + 1)
-    if len(raw) > _MAX_BODY_BYTES:
+    raw = await request.content.read(max_bytes + 1)
+    if len(raw) > max_bytes:
         return None, _err(413, "Request body too large.")
     if not raw:
         return {}, None
@@ -117,6 +120,23 @@ async def _read_json(request: "web.Request") -> Tuple[Optional[Dict[str, Any]], 
     if not isinstance(parsed, dict):
         return None, _err(400, "Request body must be a JSON object.")
     return parsed, None
+
+
+async def _analyze_image_as_text(image_url: str, question: str) -> str:
+    """Use Hermes' configured auxiliary vision model and return plain text."""
+    from hermes_cli.config import cfg_get, load_config
+    from tools.vision_tools import vision_analyze_tool
+
+    config = load_config()
+    model = str(cfg_get(config, "auxiliary", "vision", "model") or "").strip() or None
+    prompt = (
+        "Fully describe and explain everything visible in this image, then answer "
+        f"the user's question:\n\n{question}"
+    )
+    result = await vision_analyze_tool(image_url, prompt, model)
+    if not isinstance(result, str) or not result.strip():
+        raise RuntimeError("The configured vision model returned no text.")
+    return result.strip()[:32_000]
 
 
 def _anthropic_oauth_module():
@@ -1140,6 +1160,43 @@ def _apply_pending(subsystem: str, record: Dict[str, Any]) -> Tuple[bool, str]:
         return False, str(exc)
 
 
+def _build_vision_handlers(adapter) -> List[tuple]:
+    async def analyze_images(request: "web.Request") -> "web.Response":
+        """POST /v1/sentry/vision — describe validated inline images as text."""
+        auth_err = adapter._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        body, body_err = await _read_json(request, max_bytes=_MAX_IMAGE_BODY_BYTES)
+        if body_err:
+            return body_err
+        images = body.get("images") if body else None
+        question = str((body or {}).get("question") or "Describe this image.").strip()
+        if not isinstance(images, list) or not 1 <= len(images) <= 5:
+            return _err(400, "'images' must contain between one and five data URLs.")
+        if len(question) > 8_000:
+            return _err(400, "Vision question is too long.")
+        allowed = (
+            "data:image/png;base64,",
+            "data:image/jpeg;base64,",
+            "data:image/gif;base64,",
+            "data:image/webp;base64,",
+        )
+        if any(not isinstance(image, str) or not image.startswith(allowed) for image in images):
+            return _err(400, "Images must be PNG, JPEG, GIF, or WebP data URLs.")
+
+        descriptions = []
+        try:
+            for image in images:
+                descriptions.append(await _analyze_image_as_text(image, question))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Sentry auxiliary image analysis failed", exc_info=True)
+            return _err(502, f"The configured vision model could not analyze the image: {exc}")
+        return web.json_response({"descriptions": descriptions})
+
+    return [("POST", "/v1/sentry/vision", analyze_images)]
+
+
 # ---------------------------------------------------------------------------
 # Entry point used by the build-time patch
 # ---------------------------------------------------------------------------
@@ -1147,6 +1204,10 @@ def _apply_pending(subsystem: str, record: Dict[str, Any]) -> Tuple[bool, str]:
 def build_routes(adapter) -> List[tuple]:
     """Return ``(method, path, handler)`` rows for the Sentry admin surface."""
     _initialize_subscription_routes(adapter)
-    routes = _build_auth_handlers(adapter) + _build_pending_handlers(adapter)
+    routes = (
+        _build_auth_handlers(adapter)
+        + _build_pending_handlers(adapter)
+        + _build_vision_handlers(adapter)
+    )
     logger.info("api_server: Sentry admin surface registered (%d routes)", len(routes))
     return routes

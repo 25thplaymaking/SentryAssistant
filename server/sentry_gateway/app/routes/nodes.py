@@ -11,6 +11,7 @@ grant of trust on its own — the node re-validates everything before executing.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from typing import Any
 from uuid import UUID
@@ -55,6 +56,7 @@ class DispatchedWorkOrder(BaseModel):
     runtime_session_id: str | None = None
     runtime_model: str | None = None
     runtime_options: dict[str, Any] = Field(default_factory=dict)
+    input_images: list[dict[str, str]] = Field(default_factory=list)
 
 
 class RunResult(BaseModel):
@@ -92,6 +94,30 @@ def _json_object(value: Any) -> dict[str, Any]:
             return {}
         return decoded if isinstance(decoded, dict) else {}
     return {}
+
+
+def _json_list(value: Any) -> list[dict[str, str]]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return []
+    if not isinstance(value, list):
+        return []
+    return [
+        item for item in value
+        if isinstance(item, dict) and isinstance(item.get("data_url"), str)
+    ]
+
+
+def _input_images_digest(images: list[dict[str, str]]) -> str | None:
+    if not images:
+        return None
+    digest = hashlib.sha256()
+    for image in images:
+        digest.update(image["data_url"].encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 @router.post("/register", response_model=NodeView)
@@ -264,7 +290,8 @@ async def claim_work(
                 """
                 SELECT w.id, w.prompt, w.workspace_id, w.harness, w.mode,
                        w.correlation_id, w.requested_by, w.team_id, w.profile_id,
-                       w.runtime_session_id, w.runtime_model, w.runtime_options
+                       w.runtime_session_id, w.runtime_model, w.runtime_options,
+                       w.input_images
                 FROM work_orders w
                 WHERE w.execution_node_id = $1
                   AND w.state = 'assigned'
@@ -277,6 +304,7 @@ async def claim_work(
             )
 
             for row in rows:
+                input_images = _json_list(row["input_images"])
                 signed = sign_work_order(
                     signing_key=signing_key,
                     work_order_id=str(row["id"]),
@@ -291,6 +319,7 @@ async def claim_work(
                     runtime_session_id=row["runtime_session_id"],
                     runtime_model=row["runtime_model"],
                     runtime_options=_json_object(row["runtime_options"]),
+                    input_images_digest=_input_images_digest(input_images),
                 )
 
                 # Record the nonce so a replayed dispatch is refused even if the
@@ -304,7 +333,7 @@ async def claim_work(
                     row["id"],
                 )
                 await conn.execute(
-                    "UPDATE work_orders SET state = 'inProgress', updated_at = now() WHERE id = $1",
+                    "UPDATE work_orders SET state = 'inProgress', input_images = '[]'::jsonb, updated_at = now() WHERE id = $1",
                     row["id"],
                 )
                 await conn.execute(
@@ -345,6 +374,7 @@ async def claim_work(
                         runtime_session_id=row["runtime_session_id"],
                         runtime_model=row["runtime_model"],
                         runtime_options=_json_object(row["runtime_options"]),
+                        input_images=input_images,
                     )
                 )
 
@@ -498,7 +528,7 @@ async def submit_result(
                 body.summary[:4000],
             )
             await conn.execute(
-                "UPDATE work_orders SET state = $2, updated_at = now() WHERE id = $1",
+                "UPDATE work_orders SET state = $2, input_images = '[]'::jsonb, updated_at = now() WHERE id = $1",
                 work_order_id,
                 target.value,
             )
