@@ -7,6 +7,71 @@ architecture; this file is the work ledger and the queue.
 
 ---
 
+## Composer-first native Codex tooling — completed and deployed 2026-08-22
+
+The full-width Codex configuration ribbon has been replaced with the
+composer-first interaction Bryce requested. The release is live for every
+Sentry user and does not require anyone to update or operate the server.
+
+- The final SentryWebUI head is `4b5db869` (feature commit `00e1ac9b` plus the
+  composer-structure compatibility correction). It is pushed to the private
+  remote and GitHub mirror, checked out cleanly in `/srv/sentry/webui`, and
+  built into the production WebUI image.
+- A connected native Codex model now adds one stable `+` control beside the
+  composer. The old eight-control ribbon is gone. The control and menu are
+  absent for non-Codex models, so Hermes/DeepSeek Chat remains visually quiet.
+- The menu uses progressive disclosure without weakening functionality:
+  **Files and folders** selects the real allowlisted workstation workspace;
+  **Plan mode** and **Review changes** call the existing native option path;
+  **Work settings** exposes supported reasoning, file sandbox, personality,
+  and approval policy; **Tools and extensions** renders the live App Server
+  inventory and provides search for large installations.
+- Nothing in the menu is a capability badge or mock control. The values still
+  persist through the Sentry session, signed work order, Windows execution
+  node, and official Codex App Server methods documented in the earlier native
+  continuation. A separate Goal item was deliberately not invented because
+  the current public App Server path does not expose a corresponding durable
+  control.
+- The production runtime currently reports 8 Codex models, 154 skills, 17 MCP
+  servers, 31 plugins, 0 installed apps, and 0 hooks. The collapsed menu shows
+  the 202 installed tool/extension items it can actually browse; absent
+  categories remain absent. The rendered interaction was also stress-checked
+  with 214 searchable rows.
+- Keyboard behavior is explicit: opening `+` focuses the available workspace
+  selector, Escape closes the nested inventory before the menu, and closing
+  the menu returns focus to `+`. Click-outside dismissal, runtime offline
+  state, disabled controls, reduced motion, and 44 px mobile targets are
+  preserved. Desktop and 390 px visual checks showed no clipping; the mobile
+  menu measured equal client and scroll widths after the overflow correction.
+- The `ui-ux-pro-max` guidance drove the final hierarchy: prompt first, one
+  clear disclosure point, real task controls first, advanced settings second,
+  and inventory last. No new settings screen, registry, dependency, backend,
+  or design-system layer was added.
+- The first authoritative run caught one legacy composer-structure assertion:
+  the new wrapper was the first nested `div`, so a historical test stopped
+  finding Attach/Microphone. The wrapper was changed to an inline container
+  without changing the UI. The final exact-head run completed with **15077
+  passed, 296 skipped, 2 xfailed, 1 xpassed, 13 warnings, and 45 subtests
+  passed**. Focused native/composer/panel coverage was 31/31 before the full
+  run and the compatibility plus native slice was 71/71 after the correction.
+- Production is serving image manifest
+  `sha256:991eda4912e04fb861480b6444b04164915c833f2536fd56b6c352ffd6779859`,
+  application version `source-249e987c6feed46f`, and service-worker cache
+  `hermes-shell-source-249e987c6feed46f` with `no-store`. All six services are
+  running and every configured healthcheck is healthy.
+- All eight pre-existing browser sessions survived the WebUI-only recreate and
+  independently returned HTTP 200 from the live model boundary. The live
+  catalogue remains 299 choices: Anthropic 12, Nous Portal 278, OpenAI Codex
+  8, and one Sentry route. Nous DeepSeek Flash remains present and automatic;
+  no Sol model or routing default changed. The Codex runtime remains available
+  with both `enfusion` and `server-work`.
+
+Minimum architecture decision: reuse the existing composer, native option
+state, persistence route, and live App Server inventory. The only new surface
+is one contextual menu; there is no duplicate state or speculative feature.
+
+---
+
 ## Functional Sentry surface and native Codex controls — completed and deployed 2026-08-22
 
 This continuation addresses the gap between advertising features and executing
