@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     hermes_bootstrap_profile_id: str = ""
     hermes_bootstrap_profile_name: str = "sentry-personal"
 
+    #: Personal profile whose owner may use the outbound workstation bridge.
+    #: Kept separate from the runtime bootstrap pointer: deployments upgraded
+    #: from early builds can retain a historical runtime UUID that is not an
+    #: identity row in PostgreSQL. The installer pins this to the profile it
+    #: actually enrolled, so chat and node ownership cannot drift apart.
+    workstation_profile_id: str = ""
+
     #: Fernet key (urlsafe-base64) that decrypts persisted per-profile Hermes
     #: bearer keys in `runtime_endpoints`. Held only here, never in the database.
     #: Without it, persisted endpoints are skipped and only the bootstrap profile

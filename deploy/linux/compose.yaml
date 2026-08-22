@@ -276,6 +276,9 @@ services:
       SENTRY_HERMES_PINNED_VERSION: ${HERMES_VERSION:-0.19.0}
       SENTRY_HERMES_BOOTSTRAP_PROFILE_ID: ${SENTRY_BOOTSTRAP_PROFILE_ID:-}
       SENTRY_HERMES_BOOTSTRAP_PROFILE_NAME: ${SENTRY_BOOTSTRAP_PROFILE_NAME:-sentry-personal}
+      # The Windows installer pins this to the profile it actually enrolled.
+      # Do not infer it from the historical runtime bootstrap UUID.
+      SENTRY_WORKSTATION_PROFILE_ID: ${SENTRY_WORKSTATION_PROFILE_ID:-}
       # Zone the cron scheduler evaluates job schedules in. The containers run
       # UTC while the operator does not; an unset value silently shifts every
       # job by the offset, so the live .env pins it.

@@ -84,6 +84,7 @@ def build(pool: FakePool) -> TestClient:
     app.state.settings = SimpleNamespace(
         hermes_api_key=KEY,
         hermes_bootstrap_profile_id=str(PROFILE),
+        workstation_profile_id="",
     )
     return TestClient(app, raise_server_exceptions=False)
 
@@ -97,6 +98,25 @@ def test_runtime_key_is_required_before_database_access():
     response = build(pool).get("/api/runtime/workstation/status")
     assert response.status_code == 401
     assert pool.calls == []
+
+
+def test_explicit_workstation_profile_overrides_a_historical_bootstrap_uuid():
+    other = UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+    pool = FakePool()
+    app = FastAPI()
+    app.include_router(workstation_routes.router)
+    app.state.pool = pool
+    app.state.settings = SimpleNamespace(
+        hermes_api_key=KEY,
+        hermes_bootstrap_profile_id=str(other),
+        workstation_profile_id=str(PROFILE),
+    )
+    response = TestClient(app, raise_server_exceptions=False).get(
+        "/api/runtime/workstation/status", headers=auth()
+    )
+    assert response.status_code == 200
+    status_call = next(call for call in pool.calls if call[0] == "fetch")
+    assert status_call[2] == (PROFILE,)
 
 
 def test_status_returns_names_and_capabilities_without_local_paths():

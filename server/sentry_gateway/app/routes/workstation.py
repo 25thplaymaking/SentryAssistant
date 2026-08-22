@@ -55,8 +55,12 @@ def _runtime_profile(request: Request) -> UUID:
     if not expected or not supplied or not secrets.compare_digest(supplied, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized.")
 
+    configured_profile = (
+        str(getattr(settings, "workstation_profile_id", "") or "")
+        or str(getattr(settings, "hermes_bootstrap_profile_id", "") or "")
+    )
     try:
-        return UUID(str(settings.hermes_bootstrap_profile_id))
+        return UUID(configured_profile)
     except (TypeError, ValueError, AttributeError):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

@@ -161,6 +161,31 @@ $registration = Invoke-RestMethod -Method Post -Uri "$GatewayUrl/api/nodes/regis
         workspaces = $workspaceRegistration
     } | ConvertTo-Json -Depth 6 -Compress)
 
+# Bind the private chat bridge to the exact personal profile returned by this
+# enrollment. Historical deployments can have a runtime bootstrap UUID that is
+# no longer an identity row; using it would leave a healthy node invisible.
+$workstationProfileId = ([Guid]::Parse([string]$tokens.profile_id)).ToString()
+$configureProfile = @"
+cd /srv/sentry/repo/deploy/linux && if grep -q '^SENTRY_WORKSTATION_PROFILE_ID=' .env; then sed -i 's/^SENTRY_WORKSTATION_PROFILE_ID=.*/SENTRY_WORKSTATION_PROFILE_ID=$workstationProfileId/' .env; else printf '\nSENTRY_WORKSTATION_PROFILE_ID=%s\n' '$workstationProfileId' >> .env; fi && docker compose up -d --force-recreate gateway >/dev/null
+"@.Trim()
+Invoke-PrivateSsh $configureProfile | Out-Null
+
+$readyDeadline = [DateTime]::UtcNow.AddMinutes(1)
+$ready = $null
+do {
+    try {
+        $ready = Invoke-RestMethod -Method Get -Uri "$GatewayUrl/health/ready" -TimeoutSec 5
+        if ($ready.status -eq "ready") { break }
+    }
+    catch {
+        # The gateway is inside its bounded restart window.
+    }
+    Start-Sleep -Seconds 2
+} while ([DateTime]::UtcNow -lt $readyDeadline)
+if ($null -eq $ready -or $ready.status -ne "ready") {
+    throw "The Sentry Gateway did not become ready after binding the workstation profile."
+}
+
 $credentialPath = Join-Path $stateRoot "node.credentials.json"
 $logPath = Join-Path $stateRoot "node.log"
 $configPath = Join-Path $stateRoot "appsettings.node.json"
