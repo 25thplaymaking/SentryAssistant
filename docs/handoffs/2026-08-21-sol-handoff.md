@@ -7,6 +7,52 @@ architecture; this file is the work ledger and the queue.
 
 ---
 
+## Profile-scoped agent behavior — completed and deployed 2026-08-22
+
+Sentry's single signed-in profile now has a concrete purpose: it controls how
+the agent behaves on new turns. The previous profile switcher that briefly
+opened and immediately collapsed is gone. The update is live for every user
+and requires no server or client action.
+
+- Runtime heads are SentryAssistant `6e145d2` and SentryWebUI `5c454c75`.
+  Both are pushed to the private remotes and GitHub mirrors and are the exact
+  revisions built into the production Gateway and WebUI images.
+- In Sentry, the left navigation, title bar, help content, and composer control
+  consistently call this feature **Agent behavior** or **Behavior**. Clicking
+  the composer control routes directly to the persistent editor; it no longer
+  opens the irrelevant identity dropdown. Upstream Hermes multi-profile mode
+  retains its original profile switcher and active-profile source of truth.
+- The editor reads and writes the authenticated profile's existing `soul`
+  memory section through the real profile-memory API. Saved guidance persists
+  across reloads and applies to future turns. The screen explains scope,
+  precedence, retry/error behavior, and the 8,000-character bound rather than
+  presenting decorative capability claims.
+- Hermes Chat already consumes this profile memory. Native Codex Work now
+  receives the same saved behavior inside the signed work-order prompt. It is
+  framed as user-authored preference data, length-bounded, and explicitly
+  unable to override system/developer/project instructions, approvals,
+  sandboxing, privacy, or safety rules. Provider and model defaults are
+  unchanged; Hermes remains on Nous DeepSeek and no Sol route is automatic.
+- Rendered interaction QA passed on desktop and a 390 x 844 mobile viewport:
+  Work mode remained selected, the Behavior control stayed open, saved text
+  survived reload, responsive controls remained usable, and the browser console
+  was clean. Focused profile, navigation, functional-panel, and Chat/Work
+  coverage is **51 passed**. Gateway is **564 passed with 1 known framework
+  warning**. The authoritative Linux WebUI run completed with **15086 passed,
+  296 skipped, 2 xfailed, 1 xpassed, 13 warnings, and 45 subtests passed**.
+- The rebuilt production Gateway and WebUI containers are healthy. The Gateway
+  readiness endpoint reports signing, database, and Hermes runtime checks as
+  healthy. The live WebUI is `source-9398343a9f3f8e47`; the public `panels.js`
+  byte-matches both the committed source and running container and serves the
+  Agent behavior editor and save path.
+
+Minimum architecture decision: reuse the authenticated profile-memory `soul`
+field, the existing panel/composer surfaces, and the signed native Codex work
+order. The release adds no profile service, persona store, provider route,
+dependency, or speculative preset system.
+
+---
+
 ## Clipboard image delivery — completed and deployed 2026-08-22
 
 Pasted and picked images now travel through the real Sentry execution path.
