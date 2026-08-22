@@ -31,6 +31,13 @@ cannot be selected; adding a route publishes it everywhere at once. This is
 exactly the "only integrated models show up" rule, with no second registry to
 keep in sync — and no catalogue of models we cannot reach.
 
+As completed on 2026-08-21, subscription onboarding writes to this same
+registry automatically. After browser OAuth, Hermes discovers the provider's
+chat catalogue, atomically persists a provider-owned managed block, and updates
+its live route map in the same request. Nous instead activates the deployment's
+existing filtered interactive catalogue. Logout removes that provider's routes
+from the live map. This adds no second model registry and requires no restart.
+
 Verified on this host before designing anything further:
 
 ```
@@ -75,10 +82,10 @@ providers.
 
 ## Consequences
 
-- Connecting a provider = adding a route. It then appears in the picker with no
-  UI change, which is the growth path the operator asked for.
-- Subscription-backed providers (Claude, ChatGPT) become routes in project B;
-  nothing in A needs revisiting to accommodate them.
+- Connecting a provider adds its routes through the in-app subscription flow;
+  they appear in the account card and global picker immediately.
+- Subscription-backed providers (Claude, ChatGPT, Grok, MiniMax, and Nous) are
+  implemented without revisiting project A's route contract.
 - Failure mode is honest: no route means no option, rather than an option that
   quietly answers from somewhere else.
 
@@ -86,7 +93,7 @@ providers.
 
 This document covers **A** only.
 
-- **B** — subscription onboarding (Claude/ChatGPT sub becomes a route).
+- **B** — subscription onboarding (completed 2026-08-21).
 - **C** — daily import pipeline (sessions/transcripts, catalogues, usage/spend).
 
 B and C each get their own design. A deliberately lands first because it defines

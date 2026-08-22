@@ -30,7 +30,12 @@ evidence.
 - Provider connection is an in-app flow. Nous, OpenAI Codex, xAI, and MiniMax
   use browser/device OAuth through Gateway → Hermes; Anthropic uses its
   browser-plus-paste callback. The browser never receives provider tokens or
-  raw CLI output. Qwen OAuth is retired and shown unavailable.
+  raw CLI output. Successful sign-in immediately publishes that account's
+  selectable models and persists its managed routes; disconnect removes them
+  from the live picker. In **Agent → Your AI subscriptions**, the user chooses
+  a model and then selects **Use in chat**. Merely connecting or viewing an
+  account never changes the DeepSeek default. Qwen OAuth is retired and shown
+  unavailable.
 - Bryce's Windows execution node polls Gateway outbound through `[::1]:8090`.
   It exposes only named `server-work` and `enfusion` roots to the existing
   signed work-order store; no local path is stored by Gateway and no inbound
@@ -87,6 +92,14 @@ the enrolled Bryce personal profile; keep it separate from the historical
 `SENTRY_BOOTSTRAP_PROFILE_ID`. The installer maintains that binding
 automatically on a future reinstall.
 
+**Subscription usability continuation completed.** SentryAssistant `9dd0f7c`
+joins credential connection to live route publication without a restart, while
+SentryWebUI `42840d6a` gives each connected account a direct model picker and a
+single explicit **Use in chat** action. Managed non-Nous catalogues persist in
+the existing Hermes route registry; the curated Nous catalogue remains the
+source of its 278 interactive choices. The legacy server attachment script is
+break-glass only and is no longer part of the user workflow.
+
 ## Verification (2026-08-21)
 
 - Gateway suite: **515 passed** at eb50e5d. Live re-verification rejected an
@@ -114,6 +127,14 @@ automatically on a future reinstall.
   `ce5585de-1526-4ae5-b506-3653e95e864c` with `true`. The scheduled worker
   survived a restart, has one outbound loopback Gateway connection, and has no
   listening socket.
+- Subscription usability: Gateway **537 passed**. The full grain WebUI suite
+  completed with **15033 passed, 296 expected skips, 2 xfailed, 1 xpassed, and
+  45 subtests passed**. Browser checks covered desktop, 390px, device sign-in,
+  and an explicit model change. Production is healthy with 280 unique Hermes
+  choices; the connected Nous account exposes 278 selectable models with no
+  route error. Chat, delegation, compression, and background review remain on
+  `deepseek/deepseek-v4-flash`. Public update cache:
+  `hermes-shell-source-4ef260af074a0d4c`.
 
 ## Deploy loop (corrected)
 

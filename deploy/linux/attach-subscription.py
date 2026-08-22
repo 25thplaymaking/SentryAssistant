@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Attach a subscription-backed provider and publish it as a pickable model.
+"""Legacy operator recovery for a subscription-backed provider route.
+
+The normal user path is **Sentry → Agent → Your AI subscriptions**. That flow
+connects the account, publishes its supported models immediately, and needs no
+server command or restart. Do not give this script's steps to end users.
+
+Keep this utility only for break-glass recovery if the in-app admin bridge is
+unavailable. Its historical operator usage is:
 
     ./attach-subscription.py anthropic
     ./attach-subscription.py nous --alias nous-hosted
@@ -20,7 +27,7 @@ nothing can select it. That is deliberate (see
 docs/plans/2026-08-18-model-routing-design.md): the route table is the
 integration registry.
 
-The OAuth step is interactive. Run this from a real terminal.
+The legacy OAuth step is interactive and requires an operator terminal.
 """
 
 from __future__ import annotations
@@ -37,8 +44,8 @@ from pathlib import Path
 COMPOSE_DIR = Path(__file__).resolve().parent
 DEFAULT_PROFILE = "personal"
 
-#: Providers whose credential is a subscription OAuth rather than an API key.
-#: `hermes auth add <id> --type oauth` is the sanctioned flow for each.
+#: Break-glass providers whose credential is subscription OAuth, not an API key.
+#: Normal connections are owned by Sentry's in-app admin bridge.
 SUBSCRIPTION_PROVIDERS = {
     "anthropic": {
         "label": "Claude subscription",

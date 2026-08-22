@@ -48,8 +48,9 @@ the selection.
 
 ### End-user rollout — complete
 
-- The final runtime feature heads are SentryAssistant `fb5f341` and SentryWebUI
-  `1b94347e` (followed only by this documentation record in SentryAssistant).
+- The current runtime feature heads are SentryAssistant `9dd0f7c` and
+  SentryWebUI `42840d6a` (followed only by documentation records in
+  SentryAssistant).
   Both are present in the server bare repositories, live checkouts, and GitHub
   mirrors.
 - Existing owner runtime configuration and both provisioning seeds expose the
@@ -80,6 +81,19 @@ deployed, mirrored to GitHub, and live for end users.
   CLI output, and child processes stay inside Hermes. Cancel reaps the process,
   and repeated Connect cancels the prior flow. Qwen is shown as retired rather
   than offering its discontinued OAuth command.
+- SentryAssistant `9dd0f7c` closes the remaining post-login gap: a successful
+  connection now publishes that account's chat-model routes immediately,
+  persists the managed routes atomically, and removes them from the live
+  picker on disconnect. Existing authenticated accounts are activated on the
+  first provider-status read. No config edit or Hermes restart is part of the
+  user flow. Nous retains the deployment's filtered 278-model interactive
+  catalogue rather than importing its broader batch/embedding catalogue.
+- SentryWebUI `42840d6a` replaces credential-centric cards with **Your AI
+  subscriptions**. Each connected account has one model selector and one **Use
+  in chat** action. Rendering or connecting an account does not change the
+  conversation model; DeepSeek stays selected until the user explicitly picks
+  another model. Route-publication failures remain visible instead of reporting
+  the account as ready.
 - The hosted JS bundle now contains the OAuth start/poll/cancel flow and contains
   neither `Sign in on the server` nor `hermes auth add`. A live OpenAI Codex
   device flow reached `auth.openai.com`, returned a public user code, cancelled,
@@ -113,6 +127,15 @@ deployed, mirrored to GitHub, and live for end users.
   locally and **24 passed** on grain. Compose validation and self-contained
   Windows publishing passed. All six production services are running; Gateway,
   Hermes, WebUI, Postgres, and Server Control are healthy.
+- Subscription-usability verification: Gateway **537 passed**; the complete
+  grain WebUI suite finished with **15033 passed, 296 expected skips, 2 xfailed,
+  1 xpassed, and 45 subtests passed**. Desktop, 390px, sign-in, and explicit
+  model-selection browser passes had no product console errors or horizontal
+  overflow. After rollout all services are running and the five healthchecked
+  services are healthy. Hermes advertises 280 unique choices; Nous is connected
+  with 278 selectable models and no route error. Chat, delegation, compression,
+  and background review all remain `deepseek/deepseek-v4-flash`. The hosted PWA
+  cache is `hermes-shell-source-4ef260af074a0d4c`.
 
 ---
 
@@ -233,30 +256,27 @@ The picker now exposes the full interactive, tool-capable Nous catalogue while
 keeping DeepSeek selected. The implementation deliberately uses the existing
 route registry; no second catalogue or selection system was added.
 
-The design already supports this with **zero new code** — the route table IS
-the registry (`docs/plans/2026-08-18-model-routing-design.md`):
+The end-user path is now entirely inside Sentry:
 
-1. List what the subscription offers: `curl http://127.0.0.1:8645/v1/models`
-   on grain (the raw Nous proxy; accepts any bearer, loopback only).
-2. For each model worth offering, add a `model_routes` entry under
-   `platforms.api_server.extra.model_routes` in the **live** config
-   `/srv/sentry/repo/deploy/linux/data/hermes/personal/config.yaml`
-   (provider `nous`, no api_key — OAuth resolves via the provider chain).
-   **The repo's `deploy/linux/hermes/config.yaml` is only a build-time seed** —
-   edit both (live for effect, seed so a reprovision keeps it), but know that
-   editing the seed alone changes nothing.
-3. `docker compose restart hermes` (from `/srv/sentry/repo/deploy/linux`).
-4. Verify the chain: hermes `/v1/models` → gateway `GET /api/chat/models` →
-   the picker. The Gateway REFUSES un-advertised models (400) rather than
-   substituting, so a stale picker is loud, not silent.
-5. Teammates: mirror the routes in `hermes/config.teammate.yaml`.
+1. Open **Agent → Your AI subscriptions** and choose **Connect**.
+2. Complete the provider's secure browser/device flow. Anthropic uses the same
+   browser flow with a pasted confirmation value.
+3. When the account says **Ready**, choose one of its models and select **Use in
+   chat**.
 
-Notes: keep the published list to models the subscription actually serves —
-the picker showing an option that 402s at the provider is the "picker lies"
-failure this design exists to prevent. `deploy/linux/register-hosted-models.py`
-is unrelated (it registers a Server Control dashboard tab, not model routes).
-The per-model pricing file (`pricing.example.json` → `pricing.json`) feeds
-cost-at-read-time for imported sessions; extend it if cost display matters.
+That is the complete workflow. Users are not asked to SSH, run a Hermes command,
+edit YAML, or restart a service. DeepSeek stays selected unless they perform
+step 3. Disconnecting an account immediately removes its routes from the live
+model list.
+
+Internally, the route table remains the single integration registry
+(`docs/plans/2026-08-18-model-routing-design.md`). The admin bridge activates and
+persists provider-owned route blocks after OAuth, while Gateway continues to
+reject unadvertised models rather than silently substituting another backend.
+The legacy `deploy/linux/attach-subscription.py` remains only as an operator
+break-glass recovery tool; it is not a support instruction or normal onboarding
+path. `deploy/linux/register-hosted-models.py` is unrelated (it registers a
+Server Control dashboard tab, not model routes).
 
 ## 5. Kanban board source — recommendation on record
 
