@@ -7,6 +7,58 @@ architecture; this file is the work ledger and the queue.
 
 ---
 
+## Unavailable-session recovery — completed and deployed 2026-08-22
+
+The WebUI no longer strands someone on **Session not available in web UI.**
+when a saved URL, local browser pointer, or sidebar row refers to a session that
+the WebUI sidecar no longer has. Recovery is automatic; no server action is
+handed to the user.
+
+- The final SentryWebUI head is `cce47a82`. It includes the bounded recovery
+  commits `5d996e57`, `bf12945b`, and `cce47a82`, is clean in
+  `/srv/sentry/webui`, and is present at the same commit in the private remote
+  and GitHub mirror.
+- Root cause: the API correctly returned 404 for a genuinely absent session,
+  but the browser retained the dead session as its active runtime state. The
+  old fallback either left the pane on the permanent error or, during boot,
+  left **Loading conversation…** over the otherwise fresh composer.
+- A missing active session now clears only that dead runtime reference and
+  immediately opens a fresh composer. A click on a different missing sidebar
+  row restores the previously healthy conversation. Typed draft text and
+  pending attachments are preserved through both paths.
+- Boot-time stale links use the same fresh-chat fallback, but the loading
+  placeholder is cleared only after a confirmed session 404. Later unrelated
+  boot failures therefore cannot erase an already loaded conversation.
+- No session transcript is fabricated, deleted, or silently substituted. If
+  its server-side content is genuinely gone, that content remains
+  unrecoverable; the correction is that Sentry no longer traps the user on the
+  missing reference.
+- Authoritative verification on the exact final head: **15036 passed, 268
+  skipped, 2 xfailed, 1 xpassed, 4 warnings, and 45 subtests passed**. The
+  focused 14-test regression suite, JavaScript syntax checks, and whitespace
+  check also passed.
+- Authenticated production QA opened the known-deleted route
+  `/session/880a7ac9d390`. It returned to `/`, rendered **What can I help
+  with?**, showed neither the unavailable-session message nor the loading
+  placeholder, and produced no browser warnings or errors. The temporary QA
+  session artifacts remain absent and the production QA tab was closed.
+- Production is serving image manifest
+  `sha256:a75cc63b6806aa30f666c184756ef1d5a181adbde9c87be4dbdfbd15f5d0f0c2`
+  with application version `source-2f1019aec06deaa9`. All six services are
+  running, every configured healthcheck is healthy, and public `/health` is
+  `ok`.
+- Model routing and subscription behavior were not changed. The automatic Nous
+  route remains `deepseek/deepseek-v4-flash`; no Sol model was made automatic.
+  A separate 401 seen from the deliberately revoked QA browser identity was
+  confirmed at the Gateway access/refresh boundary and was not a Codex,
+  Anthropic, or DeepSeek provider failure.
+
+Minimum architecture decision: reuse the existing `loadSession` 404 handling
+and boot fallback. No dependency, service, route, screen, persistent state, or
+recovery store was added.
+
+---
+
 ## Dedicated design follow-up — completed and deployed 2026-08-22
 
 The requested follow-up with the dedicated `ui-ux-pro-max:design` guidance is
