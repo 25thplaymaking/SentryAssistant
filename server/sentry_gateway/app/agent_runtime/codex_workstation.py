@@ -9,6 +9,7 @@ approval protocol remain authoritative.
 from __future__ import annotations
 
 import asyncio
+import json
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -22,6 +23,18 @@ _TERMINAL_STATES = frozenset(
     {"readyForReview", "resolved", "closed", "cancelled", "failed"}
 )
 _EVENT_TYPES = {event.value: event for event in RuntimeEventType}
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
 
 
 class NativeCodexUnavailable(RuntimeError):
@@ -75,7 +88,7 @@ class CodexWorkstationRuntime:
         candidates: dict[str, dict[str, Any]] = {}
         for row in rows:
             node_id = str(row["node_id"])
-            runtimes = row["native_runtimes"] or {}
+            runtimes = _json_object(row["native_runtimes"])
             codex = runtimes.get("codex") if isinstance(runtimes, dict) else None
             last_seen = row["last_seen_at"]
             online = bool(
@@ -328,7 +341,7 @@ class CodexWorkstationRuntime:
                     event_type = _EVENT_TYPES.get(
                         str(row["event_type"]), RuntimeEventType.TOOL_PROGRESS
                     )
-                    evidence = dict(row["payload"] or {})
+                    evidence = _json_object(row["payload"])
                     evidence.setdefault("runtime", "codex")
                     evidence.setdefault("work_order_id", str(work_order_id))
                     event = RuntimeEvent(

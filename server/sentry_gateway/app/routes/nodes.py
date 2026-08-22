@@ -11,6 +11,7 @@ grant of trust on its own — the node re-validates everything before executing.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 from uuid import UUID
 
@@ -80,6 +81,18 @@ def _pool(request: Request):
     return pool
 
 
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
+
+
 @router.post("/register", response_model=NodeView)
 async def register_node(
     body: NodeRegistration, request: Request, caller: Caller = Depends(require_node)
@@ -111,7 +124,7 @@ async def register_node(
                 caller.user_id,
                 caller.device_id,
                 body.name,
-                body.native_runtimes,
+                json.dumps(body.native_runtimes),
             )
 
             for workspace in body.workspaces:
@@ -373,7 +386,7 @@ async def submit_event(
             body.event_index,
             body.event_type,
             body.summary,
-            body.payload,
+            json.dumps(body.payload),
         )
     return {"accepted": inserted is not None, "event_index": body.event_index}
 
@@ -414,7 +427,7 @@ async def wait_for_response(
                 request_id,
             )
         if response is not None:
-            return {"ready": True, "response": dict(response["response"] or {})}
+            return {"ready": True, "response": _json_object(response["response"])}
         if owner["state"] != "inProgress":
             return {"ready": False, "terminal": True}
         if asyncio.get_running_loop().time() >= deadline:

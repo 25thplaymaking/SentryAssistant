@@ -56,6 +56,18 @@ class NativeRuntimeResponse(BaseModel):
     response: dict = Field(default_factory=dict)
 
 
+def _json_object(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
+
+
 _EXPERIENCES = {
     "default": RuntimeExperience.CHAT.value,
     "boundary_note": (
@@ -531,7 +543,7 @@ async def respond_to_native_runtime(
                 body.request_id,
             )
             if existing is not None:
-                if dict(existing["response"] or {}) == body.response:
+                if _json_object(existing["response"]) == body.response:
                     return {"ok": True, "already_answered": True}
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -545,7 +557,7 @@ async def respond_to_native_runtime(
                 """,
                 body.work_order_id,
                 body.request_id,
-                body.response,
+                json.dumps(body.response),
                 caller.user_id,
             )
             audit = AuditService(pool)

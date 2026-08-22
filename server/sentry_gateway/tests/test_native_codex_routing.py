@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+import json
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -11,6 +13,8 @@ from app.agent_runtime.base import (
 )
 from app.agent_runtime.codex_workstation import CodexWorkstationRuntime
 from app.agent_runtime.routed import RoutedRuntime
+from app.routes.deps import Caller
+from app.routes.nodes import NodeRegistration, register_node
 
 
 class PrimaryRuntime:
@@ -183,3 +187,56 @@ def test_native_workspace_selection_is_exact_and_never_accepts_a_path_fallback()
     assert CodexWorkstationRuntime._select_workspace(status, "enfusion")["id"] == "enfusion"
     assert CodexWorkstationRuntime._select_workspace(status, r"C:\\Users\\Bryce") is None
     assert CodexWorkstationRuntime._select_workspace(status, None)["id"] == "server-work"
+
+
+@pytest.mark.asyncio
+async def test_node_registration_serializes_native_runtime_for_asyncpg_jsonb():
+    node_id = uuid4()
+
+    class Context:
+        def __init__(self, value):
+            self.value = value
+
+        async def __aenter__(self):
+            return self.value
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class Connection:
+        def __init__(self):
+            self.registration_args = None
+
+        def transaction(self):
+            return Context(self)
+
+        async def fetchval(self, query, *args):
+            if "INSERT INTO execution_nodes" in query:
+                self.registration_args = args
+                return node_id
+            return None
+
+        async def execute(self, _query, *_args):
+            return "OK"
+
+        async def fetch(self, _query, *_args):
+            return []
+
+    connection = Connection()
+    pool = SimpleNamespace(acquire=lambda: Context(connection))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=pool)))
+    caller = Caller(user_id=uuid4(), device_id=uuid4(), profile_id=uuid4())
+
+    result = await register_node(
+        NodeRegistration(
+            name="Bryce's PC",
+            native_runtimes={"codex": {"available": True, "models": ["gpt-5.6-sol"]}},
+        ),
+        request,
+        caller,
+    )
+
+    encoded = connection.registration_args[3]
+    assert isinstance(encoded, str)
+    assert json.loads(encoded)["codex"]["models"] == ["gpt-5.6-sol"]
+    assert result.node_id == node_id
