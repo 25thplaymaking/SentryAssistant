@@ -7,6 +7,72 @@ architecture; this file is the work ledger and the queue.
 
 ---
 
+## Chat/Work and linked-model continuation — completed 2026-08-22
+
+This continuation is deployed to end users, mirrored to both remotes, and
+verified against the live authenticated Sentry catalogue.
+
+- Runtime feature heads are SentryAssistant `3ca953a` and SentryWebUI
+  `ae53c578`. The live checkouts are `/srv/sentry/repo` and
+  `/srv/sentry/webui`; this documentation update follows the runtime commit in
+  SentryAssistant only.
+- Sentry now has explicit **Chat** and **Work** lanes. New Sentry sessions start
+  in Chat. Existing sessions retain their recorded lane, and legacy sessions
+  without a lane remain Work so an old executable session is never silently
+  downgraded or misrepresented.
+- Chat is the conversational-assistant lane. The browser removes workspace,
+  terminal, code, browser/computer, plugin/MCP, delegation, scheduling, and
+  workstation affordances. The Gateway also enforces the boundary on every
+  request: it sends only a bounded safe candidate set, and Hermes intersects
+  that set with the operator-enabled toolsets. A hidden child session, fork,
+  compression recovery, crafted request, or stale browser cannot promote Chat
+  to Work.
+- Work is the execution lane. It retains the profile-approved Hermes skills,
+  plugins/MCP tools, workspace, and the existing outbound Windows execution
+  node. Gateway remains the signed ingress/egress and audit boundary; no second
+  queue, inbound workstation listener, or arbitrary path/shell was added.
+- The model picker lives directly in both lanes and groups models by linked
+  account. A provider section appears only while that account is connected.
+  Model choices still route through Sentry, so provider credentials never enter
+  the browser. The Agent subscription cards now open this shared picker instead
+  of duplicating selectors or requiring a separate **Use in chat** action.
+- Provider OAuth contributes model routes, not a provider application's private
+  skills or plugins. Sentry/Hermes continues to own and govern skills, plugins,
+  memory, workspace, and workstation access. The UI states this boundary in the
+  picker and the per-lane **Access** explanation.
+- DeepSeek remains the automatic selection:
+  `deepseek/deepseek-v4-flash` is still configured for chat, delegation,
+  compression, and background review. The user can choose any visible linked
+  model per session without changing those defaults.
+- Authenticated live `/api/models` verification returned Chat/Work with Chat as
+  the default, `catalog_restricted=true`, DeepSeek present, and these visible
+  sections: Anthropic 12, Nous Research 278, OpenAI Codex 11, and one Sentry
+  friendly route. Disconnected xAI and MiniMax sections are absent rather than
+  being relabelled as generic Sentry routes.
+- Verification: Gateway **542 passed**. The final full Linux WebUI suite was
+  **15041 passed, 296 skipped, 2 xfailed, 1 xpassed, and 45 subtests passed**.
+  Browser QA used the production HTML/JS/CSS at 1440x1000 and 390x844; Chat had
+  no workspace surface or arbitrary custom-model field, Work retained its
+  access surface, the grouped picker fit without horizontal overflow, and
+  DeepSeek remained selected.
+- Production was rebuilt from those exact heads. Gateway, Hermes, WebUI,
+  Postgres, and Server Control are healthy; cloudflared is running; Gateway
+  readiness reports Hermes 0.19.0 healthy. The built Hermes image contains the
+  request-scoped toolset patch, validation cap, configured-toolset
+  intersection, and agent-thread propagation.
+- The public service worker returns 200 with `Cache-Control: no-store` and cache
+  key `hermes-shell-source-9078c2e6769e51c3`. Hosted assets contain the
+  Chat/Work switch, Access explanation, and **Choose in Chat or Work** copy, so
+  installed and browser clients discover this release without a manual cache
+  clear.
+
+Minimum architecture decision: reuse the Gateway policy boundary, Hermes
+runtime, existing outbound workstation node, session record, and model picker.
+No dependency, service, persistent store, or execution path was added beyond
+what the requested separation requires.
+
+---
+
 ## Sol continuation — completed later on 2026-08-21
 
 - Gateway cron hardening commit `eb50e5d` was rebuilt and deployed. Readiness
