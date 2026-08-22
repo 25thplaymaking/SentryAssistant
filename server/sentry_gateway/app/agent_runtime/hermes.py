@@ -35,6 +35,7 @@ from .base import (
     RuntimeCapabilities,
     RuntimeEvent,
     RuntimeEventType,
+    RuntimeExperience,
     RuntimeSession,
     RuntimeTurn,
     ScopedSessionQuery,
@@ -42,6 +43,35 @@ from .base import (
     SessionScope,
     WorkOrderProjection,
 )
+
+
+_CHAT_TOOLSETS: tuple[str, ...] = (
+    "web",
+    "vision",
+    "image_gen",
+    "tts",
+    "todo",
+    "memory",
+    "session_search",
+    "clarify",
+)
+
+_EXPERIENCE_INSTRUCTIONS = {
+    RuntimeExperience.CHAT: (
+        "You are Hermes in Sentry Chat, an everyday conversational assistant. "
+        "Help through conversation, research, memory, planning, voice, and visual "
+        "understanding. This lane deliberately has no workspace, file, terminal, "
+        "code-execution, browser/computer-control, plugin, MCP, workstation, "
+        "delegation, or scheduled-execution access. Never claim those actions ran; "
+        "when one is needed, explain briefly that the user can continue in Work."
+    ),
+    RuntimeExperience.WORK: (
+        "You are Hermes in Sentry Work. Use the profile-approved Hermes skills, "
+        "tools, plugins, workspace, and workstation connections needed to complete "
+        "the user's multi-step work. All actions remain subject to Sentry routing, "
+        "approval, ingress, egress, and audit controls."
+    ),
+}
 
 #: Hermes SSE event name -> Sentry normalized type. Anything unmapped becomes
 #: TOOL_PROGRESS, which is never speakable, so an unrecognized event can never be
@@ -435,8 +465,18 @@ class HermesRuntime(AgentRuntime):
             "model": request.model or instance.profile_name,
             "input": content,
             "stream": True,
-            "metadata": {"sentry_correlation_id": request.correlation_id},
+            "instructions": _EXPERIENCE_INSTRUCTIONS[request.experience],
+            "metadata": {
+                "sentry_correlation_id": request.correlation_id,
+                "sentry_experience": request.experience.value,
+            },
         }
+        if request.experience is RuntimeExperience.CHAT:
+            # Sentry's pinned Hermes patch validates this allowlist and
+            # intersects it with the operator-approved toolsets before AIAgent
+            # is constructed. Work omits it so that configured surface remains
+            # unchanged.
+            payload["sentry_enabled_toolsets"] = list(_CHAT_TOOLSETS)
 
         for attempt in (0, 1):
             async with self._client.stream(

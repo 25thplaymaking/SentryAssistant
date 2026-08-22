@@ -16,7 +16,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..agent_runtime.base import RuntimeEvent, RuntimeTurn, SessionScope
+from ..agent_runtime.base import (
+    RuntimeEvent,
+    RuntimeExperience,
+    RuntimeTurn,
+    SessionScope,
+)
 from ..agent_runtime.endpoints import refresh_profile_endpoint
 from ..agent_runtime.hermes import UnknownProfileError
 from ..actions.recorder import ActionRecorder
@@ -36,6 +41,120 @@ class ChatTurnRequest(BaseModel):
     #: configured default. A value that this profile does not advertise is
     #: REFUSED (400) rather than quietly downgraded -- see _validated_model.
     model: str | None = None
+    #: The product lane controls the request-scoped Hermes capability surface.
+    #: Work is the compatibility default for older clients; the Sentry UI sends
+    #: its selected lane explicitly on every turn.
+    experience: RuntimeExperience = RuntimeExperience.WORK
+
+
+_EXPERIENCES = {
+    "default": RuntimeExperience.CHAT.value,
+    "boundary_note": (
+        "Linked accounts provide models. Sentry and Hermes provide and govern "
+        "skills, plugins, memory, workspace, and workstation access."
+    ),
+    "items": [
+        {
+            "id": RuntimeExperience.CHAT.value,
+            "label": "Chat",
+            "summary": "Talk with Hermes as your everyday assistant.",
+            "available": [
+                "Web research",
+                "Images and vision",
+                "Voice input",
+                "Memory and conversation search",
+            ],
+            "blocked": [
+                "Workspace files",
+                "Terminal and code execution",
+                "Browser and computer control",
+                "Plugins and workstation actions",
+                "Delegation and scheduled execution",
+            ],
+        },
+        {
+            "id": RuntimeExperience.WORK.value,
+            "label": "Work",
+            "summary": "Give Hermes a workspace and let it execute multi-step work.",
+            "available": [
+                "Profile-approved Hermes skills and tools",
+                "Workspace, terminal, and code execution",
+                "Browser and computer control",
+                "Plugins, MCP, and workstation actions",
+                "Delegation and scheduled execution",
+            ],
+            "blocked": [],
+        },
+    ],
+}
+
+
+def _fallback_model_group(models: tuple[str, ...]) -> list[dict]:
+    visible = [model for model in models if model != "hermes-agent"]
+    if not visible:
+        return []
+    return [
+        {
+            "provider": "Sentry routes",
+            "provider_id": "sentry",
+            "models": [{"id": model, "label": model} for model in visible],
+        }
+    ]
+
+
+async def _linked_model_groups(runtime, profile_id, models: tuple[str, ...]) -> list[dict]:
+    """Group only authenticated provider routes that Hermes can actually reach.
+
+    Provider login and model routing are separate facts. The intersection with
+    ``available_models`` prevents a stale OAuth status from displaying a route
+    Hermes no longer advertises, while omitting unauthenticated providers keeps
+    disconnected subscriptions out of the picker entirely.
+    """
+    if not hasattr(runtime, "list_auth_providers"):
+        return _fallback_model_group(models)
+    try:
+        payload = await runtime.list_auth_providers(profile_id)
+    except Exception:
+        return _fallback_model_group(models)
+
+    advertised = set(models)
+    claimed: set[str] = set()
+    groups: list[dict] = []
+    providers = payload.get("data", []) if isinstance(payload, dict) else []
+    for provider in providers:
+        if not isinstance(provider, dict) or not provider.get("authenticated"):
+            continue
+        routed = []
+        for route in provider.get("models") or []:
+            if not isinstance(route, dict):
+                continue
+            alias = str(route.get("id") or "").strip()
+            if not alias or alias not in advertised or alias in claimed:
+                continue
+            target = str(route.get("model") or alias).strip()
+            routed.append({"id": alias, "label": target, "source_model": target})
+            claimed.add(alias)
+        if routed:
+            groups.append(
+                {
+                    "provider": str(provider.get("name") or provider.get("id") or "Provider"),
+                    "provider_id": str(provider.get("id") or "provider"),
+                    "models": routed,
+                }
+            )
+
+    unclaimed = [
+        model for model in models if model != "hermes-agent" and model not in claimed
+    ]
+    if unclaimed:
+        groups.append(
+            {
+                "provider": "Sentry routes",
+                "provider_id": "sentry",
+                "models": [{"id": model, "label": model} for model in unclaimed],
+            }
+        )
+    return groups
 
 
 async def _validated_model(runtime, profile_id, model: str | None) -> str | None:
@@ -166,7 +285,12 @@ async def list_models(request: Request, caller: Caller = Depends(require_caller)
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No agent runtime is provisioned for this profile.",
         )
-    return {"models": list(models)}
+    models = tuple(models)
+    return {
+        "models": list(models),
+        "groups": await _linked_model_groups(runtime, caller.profile_id, models),
+        "experiences": _EXPERIENCES,
+    }
 
 
 def _sse(event: RuntimeEvent) -> str:
@@ -283,6 +407,7 @@ async def chat_turn(
         correlation_id=correlation_id,
         quoted_context=tuple(body.quoted_context),
         model=chosen_model,
+        experience=body.experience,
     )
 
     # Recording lives here, not in the runtime adapter: this is where the pool

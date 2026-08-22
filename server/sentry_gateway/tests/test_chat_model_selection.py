@@ -19,7 +19,12 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.agent_runtime.base import RuntimeEvent, RuntimeEventType, RuntimeSession
+from app.agent_runtime.base import (
+    RuntimeEvent,
+    RuntimeEventType,
+    RuntimeExperience,
+    RuntimeSession,
+)
 from app.agent_runtime.hermes import UnknownProfileError
 from app.auth.tokens import Audience, TokenService
 from app.routes import chat as chat_routes
@@ -35,10 +40,12 @@ def _now():
 
 
 class FakeRuntime:
-    def __init__(self, known_profiles, models=ADVERTISED):
+    def __init__(self, known_profiles, models=ADVERTISED, providers=None):
         self._known = set(known_profiles)
         self._models = tuple(models)
+        self._providers = list(providers or [])
         self.turns: list[tuple[UUID, str, str | None]] = []
+        self.experiences: list[RuntimeExperience] = []
         self.models_queried: list[UUID] = []
 
     async def create_session(self, profile_id, scope):
@@ -55,10 +62,16 @@ class FakeRuntime:
         self.models_queried.append(profile_id)
         return self._models
 
+    async def list_auth_providers(self, profile_id):
+        if profile_id not in self._known:
+            raise UnknownProfileError(str(profile_id))
+        return {"object": "list", "data": self._providers}
+
     async def send_turn(self, request):
         if request.profile_id not in self._known:
             raise UnknownProfileError(str(request.profile_id))
         self.turns.append((request.profile_id, request.prompt, request.model))
+        self.experiences.append(request.experience)
         yield RuntimeEvent(
             type=RuntimeEventType.TURN_COMPLETED, session_id=request.session_id,
             correlation_id=request.correlation_id, occurred_at=_now(), summary="done",
@@ -102,6 +115,29 @@ class TestModelReachesRuntime:
         resp = client.post("/api/chat/turn", json={"prompt": "hi"}, headers=bearer(PROFILE_A))
         assert resp.status_code == 200
         assert runtime.turns == [(PROFILE_A, "hi", None)]
+        assert runtime.experiences == [RuntimeExperience.WORK]
+
+    def test_chat_experience_is_forwarded(self):
+        runtime = FakeRuntime([PROFILE_A])
+        client = build_client(runtime)
+        resp = client.post(
+            "/api/chat/turn",
+            json={"prompt": "hi", "experience": "chat"},
+            headers=bearer(PROFILE_A),
+        )
+        assert resp.status_code == 200
+        assert runtime.experiences == [RuntimeExperience.CHAT]
+
+    def test_unknown_experience_is_rejected_before_a_turn_runs(self):
+        runtime = FakeRuntime([PROFILE_A])
+        client = build_client(runtime)
+        resp = client.post(
+            "/api/chat/turn",
+            json={"prompt": "hi", "experience": "unsafe"},
+            headers=bearer(PROFILE_A),
+        )
+        assert resp.status_code == 422
+        assert runtime.turns == []
 
     def test_chosen_model_is_forwarded(self):
         runtime = FakeRuntime([PROFILE_A])
@@ -165,3 +201,38 @@ class TestAdvertisedList:
         resp = client.get("/api/chat/models", headers=bearer(PROFILE_A))
         assert resp.status_code == 200
         assert resp.json()["models"] == []
+
+    def test_groups_only_models_from_authenticated_linked_providers(self):
+        providers = [
+            {
+                "id": "nous",
+                "name": "Nous Research",
+                "authenticated": True,
+                "models": [
+                    {"id": "qwen3.6-35b-local", "model": "deepseek/deepseek-v4-flash"},
+                ],
+            },
+            {
+                "id": "xai-oauth",
+                "name": "xAI",
+                "authenticated": False,
+                "models": [{"id": "gpt-5.4", "model": "x-ai/grok-4"}],
+            },
+        ]
+        client = build_client(FakeRuntime([PROFILE_A], providers=providers))
+        payload = client.get("/api/chat/models", headers=bearer(PROFILE_A)).json()
+
+        assert payload["groups"][0] == {
+            "provider": "Nous Research",
+            "provider_id": "nous",
+            "models": [
+                {
+                    "id": "qwen3.6-35b-local",
+                    "label": "deepseek/deepseek-v4-flash",
+                    "source_model": "deepseek/deepseek-v4-flash",
+                }
+            ],
+        }
+        assert all(group["provider_id"] != "xai-oauth" for group in payload["groups"])
+        assert payload["groups"][1]["provider"] == "Sentry routes"
+        assert payload["experiences"]["default"] == "chat"

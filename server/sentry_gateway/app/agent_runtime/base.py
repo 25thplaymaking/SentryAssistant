@@ -45,6 +45,18 @@ class ContextVisibility(StrEnum):
     WORKSPACE = "workspace"
 
 
+class RuntimeExperience(StrEnum):
+    """The product lane a turn runs in.
+
+    Work preserves the profile's configured Hermes capability surface. Chat is
+    a conversational lane whose smaller toolset is enforced by the runtime
+    adapter rather than trusted to a client-side toggle.
+    """
+
+    CHAT = "chat"
+    WORK = "work"
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeCapabilities:
     """What a runtime can actually do, discovered rather than assumed."""
@@ -97,6 +109,10 @@ class RuntimeTurn:
     #: unvalidated value must never reach here (it would silently answer from
     #: the default while the UI claimed otherwise).
     model: str | None = None
+    #: Legacy callers default to Work so adding the field cannot silently take
+    #: tools away from existing integrations. New Sentry sessions choose Chat
+    #: explicitly when that is the user's selected lane.
+    experience: RuntimeExperience = RuntimeExperience.WORK
 
 
 @dataclass(frozen=True, slots=True)

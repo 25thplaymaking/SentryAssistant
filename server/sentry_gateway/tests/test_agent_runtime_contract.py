@@ -4,6 +4,7 @@ These run against the adapter's normalization logic without a live Hermes, so
 switching runtimes can be validated before anything is deployed.
 """
 
+import json
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -15,6 +16,7 @@ from app.agent_runtime.base import (
     ContextVisibility,
     RuntimeEvent,
     RuntimeEventType,
+    RuntimeExperience,
     RuntimeTurn,
     SessionScope,
     WorkOrderProjection,
@@ -174,6 +176,60 @@ class TestQuotedContext:
         assert "<quoted-data" in body
         assert "untrusted reference material" in body
         assert captured["auth"] == "Bearer test-key"
+
+
+class TestExperienceCapabilityBoundary:
+    async def test_chat_sends_only_the_conversational_toolsets(self):
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.update(json.loads(request.content))
+            return httpx.Response(200, text="data: [DONE]\n")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        runtime = HermesRuntime({PROFILE: instance()}, client=client)
+        request = RuntimeTurn(
+            session_id="chat-1",
+            profile_id=PROFILE,
+            prompt="Help me plan dinner.",
+            correlation_id="corr-chat",
+            experience=RuntimeExperience.CHAT,
+        )
+        async for _ in runtime.send_turn(request):
+            pass
+        await client.aclose()
+
+        assert captured["metadata"]["sentry_experience"] == "chat"
+        assert set(captured["sentry_enabled_toolsets"]) == {
+            "web",
+            "vision",
+            "image_gen",
+            "tts",
+            "todo",
+            "memory",
+            "session_search",
+            "clarify",
+        }
+        assert "terminal" not in captured["sentry_enabled_toolsets"]
+        assert "computer_use" not in captured["sentry_enabled_toolsets"]
+        assert "Sentry Chat" in captured["instructions"]
+
+    async def test_work_preserves_the_configured_hermes_surface(self):
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.update(json.loads(request.content))
+            return httpx.Response(200, text="data: [DONE]\n")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        runtime = HermesRuntime({PROFILE: instance()}, client=client)
+        async for _ in runtime.send_turn(turn()):
+            pass
+        await client.aclose()
+
+        assert captured["metadata"]["sentry_experience"] == "work"
+        assert "sentry_enabled_toolsets" not in captured
+        assert "Sentry Work" in captured["instructions"]
 
 
 class TestProjection:

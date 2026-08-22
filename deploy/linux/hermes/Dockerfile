@@ -111,6 +111,13 @@ COPY --chown=hermes:hermes sentry_admin.py /home/hermes/.local/lib/python3.11/si
 COPY --chown=hermes:hermes patches/api_server_admin_surface.py /tmp/
 RUN python3 /tmp/api_server_admin_surface.py
 
+# Enforce Sentry Chat's request-scoped capability surface. Work sends no
+# override and therefore retains the profile's configured Hermes tools. This is
+# applied after the other API-server patches and fails the build if the pinned
+# Hermes source no longer matches the verified path.
+COPY --chown=hermes:hermes patches/api_server_sentry_experience.py /tmp/
+RUN python3 /tmp/api_server_sentry_experience.py
+
 COPY --chown=hermes:hermes server_control_mcp.py /opt/sentry-tools/server_control_mcp.py
 COPY --chown=hermes:hermes --chmod=755 start-hermes.sh /home/hermes/start-hermes.sh
 
