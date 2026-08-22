@@ -7,6 +7,56 @@ architecture; this file is the work ledger and the queue.
 
 ---
 
+## Final model-picker UI pass — completed and deployed 2026-08-22
+
+The requested final `ui-ux-pro-max` pass is live for end users. It preserves
+Sentry's restrained console visual language while making the linked-model and
+native Codex Work controls easier to scan, operate, and understand on desktop
+and mobile.
+
+- The final SentryWebUI feature head is `c58d3dfe`. It is committed, present in
+  the private remote and GitHub mirror, pulled into `/srv/sentry/webui`, built
+  into the production WebUI image, and serving at the public edge.
+- **OpenAI Codex** is the first picker section, so the eight models reported by
+  the signed-in native workstation runtime are immediately available. The
+  large Nous catalogue is divided into collapsible vendor sections; the vendor
+  containing the current selection opens automatically. This keeps Codex and
+  the selected DeepSeek route visible together without removing or filtering
+  any choices.
+- The live authenticated picker contains all **299** available choices.
+  `deepseek-v4-flash` remains selected and its `nous::deepseek` section opens
+  automatically. The server defaults remain provider `nous`, model
+  `deepseek/deepseek-v4-flash`; no Sol model was made automatic by this pass.
+- Provider and vendor disclosures now expose their expanded state to assistive
+  technology. Model rows are keyboard-operable, identify the active choice,
+  and meet the mobile touch-target floor. Escape closes only the nested mobile
+  picker before the parent controls and reliably returns focus to the model
+  trigger on both layouts. Reduced-motion preferences are respected.
+- Selected, native-runtime, primary, and fallback badges now use theme tokens
+  instead of dark-only colors. The final interface was visually checked in
+  desktop dark, desktop light, and mobile dark layouts; the user's stored dark
+  theme was restored after the non-persistent light-theme check.
+- Native Codex controls now say **Workspace on your machine**, report runtime
+  state through a live region, expose correct disclosure semantics, and provide
+  clear focus, disabled, busy, success, and failure behavior without adding a
+  new screen or settings workflow.
+- Authoritative verification on the exact final head: **15031 passed, 268
+  skipped, 2 xfailed, 1 xpassed, and 45 subtests passed**. JavaScript syntax and
+  whitespace checks also passed. Live desktop and mobile probes both rendered
+  all 299 rows, placed Codex first, kept DeepSeek selected at scroll position
+  zero, and returned focus to the correct trigger after Escape.
+- The temporary browser identity used for authenticated production QA was
+  revoked through the Gateway API, including immediate in-process denial; both
+  of its refresh-token rows are revoked. Temporary QA tabs are closed. Two
+  unused pairing codes remain only as expired audit records and cannot be
+  redeemed.
+
+Minimum architecture decision: refine the existing picker, native-runtime
+controls, and theme tokens. No dependency, service, route, screen, persistent
+store, or design-system layer was added.
+
+---
+
 ## Native Codex Work continuation — completed and deployed 2026-08-22
 
 This continuation supersedes the earlier statement that an OpenAI Codex link
