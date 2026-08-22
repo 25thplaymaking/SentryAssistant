@@ -7,6 +7,75 @@ architecture; this file is the work ledger and the queue.
 
 ---
 
+## Native Codex Work continuation — completed and deployed 2026-08-22
+
+This continuation supersedes the earlier statement that an OpenAI Codex link
+contributes models only. Selecting a connected `chatgpt-plan/*` model now moves
+that Sentry session into **Work** and runs the turn through the official Codex
+App Server on Bryce's own workstation. DeepSeek and every non-Codex selection
+continue to run through Hermes exactly as before.
+
+- Runtime feature heads are SentryAssistant `f8add52` and SentryWebUI
+  `c0e3ad92`; this handoff-only commit follows `f8add52`. Both runtime heads are
+  in the private server remotes and live checkouts. Migration
+  `015_native_codex_relay.sql` is applied to production.
+- The hidden Windows node is installed and running from release `f8add52`. It
+  starts the npm package's native `codex.exe` directly—never a Store alias,
+  `cmd /c`, or `npx` wrapper—and keeps the workstation outbound-only. There is
+  still no inbound listener or arbitrary client-supplied path.
+- The local App Server is the authoritative model catalogue. The live picker
+  exposes all eight models it reported:
+  `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`,
+  `gpt-daybreak-blue-latest`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, and
+  `gpt-5.3-codex-spark`. Newly reported models appear without relinking. The
+  complete Codex section remains hidden when the Sentry subscription link or
+  live workstation runtime is unavailable.
+- Native Work retains the App Server's Codex thread and project-instruction
+  behavior and surfaces its streamed lifecycle, plans/review/diffs, tool
+  activity, token/rate-limit events, approvals, multi-question input, MCP
+  elicitation, skills, apps/connectors, MCP servers, plugins, sandbox,
+  filesystem/worktrees, web search, images, subagents, hooks, configuration,
+  and interrupt capability. A Sentry session is durably mapped to its local
+  Codex thread so later turns resume the same native session.
+- Only the named `server-work` and `enfusion` roots can be selected. Local paths
+  are sanitized before event relay. Chat cannot select a Codex model; native
+  Codex is Work-only, with `workspace-write` inside the selected allowlisted
+  root and App Server `on-request` approvals. Approval/question responses are
+  profile-bound, exact-request, audited, idempotent, and sent back through the
+  node's existing outbound long poll.
+- Stopping or closing a live stream now cancels the durable work order, signals
+  the node, calls native `turn/interrupt`, and force-cleans the direct App
+  Server child tree if graceful interruption does not finish. The locally
+  persisted thread mapping survives node and browser restarts.
+- End-to-end production proof selected `chatgpt-plan/gpt-5.4-mini` in
+  `server-work`, streamed real App Server MCP/thread/turn/item/token events, and
+  returned exactly `NATIVE_CODEX_READY`. The temporary desktop QA identity was
+  revoked; the successful native work order is durable as `readyForReview`.
+- Verification: Gateway **549 passed**; Windows node **106 total, 104 passed
+  and 2 deliberate opt-in skips**; affected WebUI slices **173 passed**; the
+  authoritative full grain WebUI suite finished with **15054 passed, 296
+  expected skips, 2 xfailed, 1 xpassed, and 45 subtests passed**. The public
+  sign-in shell rendered with no browser-console errors. Gateway and WebUI are
+  healthy, and the public edge responds normally.
+- Process hygiene is unchanged after the real App Server turn: resident
+  `cmd.exe` stayed at 8 and `node.exe` stayed at 10. The two visible
+  `codex.exe` processes predate this release and belong to the Codex desktop
+  app; the per-turn npm App Server process and its descendants were reaped.
+
+Honest product boundary: Sentry embeds the native capabilities OpenAI exposes
+through the public Codex App Server protocol. It does not claim to clone or
+import proprietary ChatGPT UI, consumer chat history/memory, or any private
+service that OpenAI does not expose to third-party clients. Within that public
+surface, Codex models are no longer Hermes model proxies—they use the signed-in
+local Codex runtime and its native tools/features.
+
+Minimum architecture decision: extend the existing signed work-order store and
+outbound workstation node with one App Server adapter, ordered event rows, and
+exact response rows. No second queue, daemon, inbound port, model proxy, or
+credential store was added.
+
+---
+
 ## Chat/Work and linked-model continuation — completed 2026-08-22
 
 This continuation is deployed to end users, mirrored to both remotes, and
