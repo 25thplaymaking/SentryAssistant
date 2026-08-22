@@ -107,7 +107,7 @@ automatically on a future reinstall.
   Hermes and Gateway each advertise 280 unique picker entries (278 catalogue
   models, the friendly alias, and `hermes-agent`), with batch and embedding
   entries absent.
-- Continuation: Gateway **531 passed**; Windows node **103 total, 101 passed and
+- Continuation: Gateway **533 passed**; Windows node **103 total, 101 passed and
   two opt-in smoke tests skipped**. A live OpenAI Codex device flow started and
   cancelled with zero orphan processes. DeepSeek `deepseek-v4-flash` called the
   workstation tools itself and completed read-only work order

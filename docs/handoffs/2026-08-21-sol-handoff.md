@@ -107,7 +107,7 @@ deployed, mirrored to GitHub, and live for end users.
   `ce5585de-1526-4ae5-b506-3653e95e864c` reached `readyForReview`, returned
   `true`, and was reported as succeeded. The node has one established IPv6
   loopback connection to Gateway port 8090 and zero listening sockets.
-- Verification totals for this continuation: Gateway **531 passed**; execution
+- Verification totals for this continuation: Gateway **533 passed**; execution
   node **103 total, 101 passed and 2 opt-in smoke tests skipped**; focused
   provider bridge **33 passed**; focused WebUI OAuth/model surfaces **63 passed**
   locally and **24 passed** on grain. Compose validation and self-contained
