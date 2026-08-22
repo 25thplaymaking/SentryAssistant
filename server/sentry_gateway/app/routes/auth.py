@@ -81,6 +81,15 @@ def _pool(request: Request):
     return pool
 
 
+def _access_audience_for_device_kind(device_kind: str) -> Audience:
+    """Execution nodes keep their separate audience across token rotation."""
+    return (
+        Audience.NODE
+        if device_kind == DeviceKind.EXECUTION_NODE.value
+        else Audience.CLIENT
+    )
+
+
 @router.post("/enroll/start", response_model=EnrollmentCodeView)
 async def start_enrollment(
     body: StartEnrollment, request: Request, caller: Caller = Depends(require_caller)
@@ -199,11 +208,7 @@ async def complete_enrollment(body: CompleteEnrollment, request: Request) -> Tok
                     detail="User has no personal profile to bind this device to.",
                 )
 
-            audience = (
-                Audience.NODE
-                if row["device_kind"] == DeviceKind.EXECUTION_NODE.value
-                else Audience.CLIENT
-            )
+            audience = _access_audience_for_device_kind(row["device_kind"])
             access = tokens.issue_access_token(
                 user_id=str(row["user_id"]),
                 device_id=str(device_id),
@@ -298,7 +303,7 @@ async def refresh_tokens(body: RefreshRequest, request: Request) -> TokenPair:
                 )
 
             device = await conn.fetchrow(
-                "SELECT revoked_at FROM devices WHERE id = $1", row["device_id"]
+                "SELECT revoked_at, kind FROM devices WHERE id = $1", row["device_id"]
             )
             if device is None or device["revoked_at"] is not None:
                 raise HTTPException(
@@ -318,7 +323,7 @@ async def refresh_tokens(body: RefreshRequest, request: Request) -> TokenPair:
                 user_id=str(row["user_id"]),
                 device_id=str(row["device_id"]),
                 profile_id=str(profile_id),
-                audience=Audience.CLIENT,
+                audience=_access_audience_for_device_kind(device["kind"]),
             )
             rotated = tokens.issue_refresh_token(
                 user_id=str(row["user_id"]), device_id=str(row["device_id"])

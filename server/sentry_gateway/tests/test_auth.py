@@ -15,6 +15,7 @@ from app.auth.work_order_signing import (
     sign_work_order,
     validate_work_order,
 )
+from app.routes.auth import _access_audience_for_device_kind
 from app.workorders.transitions import WorkOrderMode
 
 KEY = "test-signing-key-not-a-real-secret-padded-to-32-bytes-minimum"
@@ -62,6 +63,13 @@ class TestEnrollment:
 
 
 class TestTokens:
+    def test_execution_node_refresh_keeps_node_audience(self):
+        assert (
+            _access_audience_for_device_kind(DeviceKind.EXECUTION_NODE.value)
+            is Audience.NODE
+        )
+        assert _access_audience_for_device_kind(DeviceKind.DESKTOP.value) is Audience.CLIENT
+
     def test_access_token_round_trips(self):
         svc = TokenService(KEY)
         token = svc.issue_access_token(
@@ -186,4 +194,3 @@ class TestWorkOrderValidation:
                 expectation=NODE,
                 seen_nonces=set(),
             )
-

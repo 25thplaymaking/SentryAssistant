@@ -11,9 +11,8 @@ using Sentry.Node.Workspaces;
 // outbound to the Gateway. Nothing listens here.
 //
 // Configuration comes from appsettings.node.json next to the executable, or a
-// path given as the first argument. Secrets come from the environment:
-//   SENTRY_NODE_TOKEN    node-audience access token from device enrolment
-//   SENTRY_SIGNING_KEY   shared key used to validate signed work orders
+// path given as the first argument. Secrets are DPAPI-protected for this
+// Windows user and never appear in the scheduled-task command line.
 
 // Hook management and hook delivery run without a gateway token or a signing
 // key: installing hooks is a local file edit, and receiving one must work on a
@@ -33,17 +32,6 @@ if (!File.Exists(configPath))
     return 2;
 }
 
-var token = Environment.GetEnvironmentVariable("SENTRY_NODE_TOKEN");
-var signingKey = Environment.GetEnvironmentVariable("SENTRY_SIGNING_KEY");
-
-if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(signingKey))
-{
-    Console.Error.WriteLine(
-        "SENTRY_NODE_TOKEN and SENTRY_SIGNING_KEY must both be set. " +
-        "Enrol this machine as an executionNode device to obtain a token.");
-    return 2;
-}
-
 NodeConfig config;
 try
 {
@@ -57,6 +45,41 @@ catch (Exception exception)
     Console.Error.WriteLine($"Could not read {configPath}: {exception.Message}");
     return 2;
 }
+
+var configDirectory = Path.GetDirectoryName(Path.GetFullPath(configPath))
+    ?? AppContext.BaseDirectory;
+var logPath = ResolvePath(config.LogPath, configDirectory, "node.log");
+Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+if (File.Exists(logPath) && new FileInfo(logPath).Length > 5_000_000)
+    File.Move(logPath, logPath + ".previous", overwrite: true);
+using var logWriter = TextWriter.Synchronized(new StreamWriter(
+    new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.Read))
+{
+    AutoFlush = true
+});
+Console.SetOut(logWriter);
+Console.SetError(logWriter);
+
+var credentialPath = ResolvePath(
+    config.CredentialPath, configDirectory, "node.credentials.json");
+var credentialFile = new Sentry.Node.Gateway.NodeCredentialFile(credentialPath);
+Sentry.Node.Gateway.NodeCredentialSecrets secrets;
+try
+{
+    secrets = credentialFile.Load();
+}
+catch (Exception exception)
+{
+    Console.Error.WriteLine($"Could not load protected node credentials: {exception.Message}");
+    return 2;
+}
+
+var credentialSession = new Sentry.Node.Gateway.NodeCredentialSession(
+    secrets.AccessToken,
+    secrets.RefreshToken,
+    (access, refresh, cancellationToken) => credentialFile.SaveAsync(
+        new Sentry.Node.Gateway.NodeCredentialSecrets(access, refresh, secrets.SigningKey),
+        cancellationToken));
 
 // Workspace roots are declared here, locally. The Gateway only ever sends the
 // identifier, so this file is the single place a path is bound.
@@ -102,8 +125,8 @@ Console.CancelKeyPress += (_, e) =>
 
 var worker = new NodeWorker(new NodeWorkerOptions(
     GatewayUrl: config.GatewayUrl,
-    AccessToken: token,
-    SigningKey: signingKey,
+    Credentials: credentialSession,
+    SigningKey: secrets.SigningKey,
     NodeName: config.NodeName,
     Expectation: expectation,
     Workspaces: registry,
@@ -116,6 +139,12 @@ Console.WriteLine($"harnesses:  {string.Join(", ", harnesses.Keys)}");
 
 await worker.RunAsync(shutdown.Token);
 return 0;
+
+static string ResolvePath(string? configured, string baseDirectory, string fallbackName)
+{
+    var value = string.IsNullOrWhiteSpace(configured) ? fallbackName : configured;
+    return Path.GetFullPath(value, baseDirectory);
+}
 
 internal sealed record WorkspaceConfig(
     string WorkspaceId,
@@ -130,5 +159,7 @@ internal sealed record NodeConfig(
     string OwnerUserId,
     WorkspaceConfig[] Workspaces,
     string[] TeamMembers,
+    string? CredentialPath = null,
+    string? LogPath = null,
     string ClaudeExecutable = "claude",
     int PollIntervalSeconds = 5);

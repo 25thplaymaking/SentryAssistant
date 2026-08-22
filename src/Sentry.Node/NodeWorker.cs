@@ -7,7 +7,7 @@ namespace Sentry.Node;
 
 public sealed record NodeWorkerOptions(
     string GatewayUrl,
-    string AccessToken,
+    NodeCredentialSession Credentials,
     string SigningKey,
     string NodeName,
     NodeExpectation Expectation,
@@ -38,7 +38,7 @@ public sealed class NodeWorker
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        using var connection = new NodeConnection(_options.GatewayUrl, _options.AccessToken);
+        using var connection = new NodeConnection(_options.GatewayUrl, _options.Credentials);
         var backoff = new ReconnectBackoff();
 
         await RegisterAsync(connection, backoff, cancellationToken);
@@ -94,6 +94,14 @@ public sealed class NodeWorker
             {
                 var response = await connection.RegisterAsync(
                     new NodeRegistrationRequest(_options.NodeName, workspaces), cancellationToken);
+                if (response is null || !string.Equals(
+                        response.NodeId.ToString(),
+                        _options.Expectation.NodeId,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "The Gateway returned a different execution-node identity than this installation expects.");
+                }
                 _log($"registered as node {response?.NodeId} with {workspaces.Count} workspace(s)");
                 backoff.Reset();
                 return;
@@ -137,7 +145,7 @@ public sealed class NodeWorker
                     dispatch.Prompt, validated.Mode, workspace, progress, cancellationToken);
 
                 result = new RunResultRequest(
-                    run.Outcome, run.Summary, run.StatusBoundary, run.Evidence);
+                    run.Outcome, DurableSummary(run), run.StatusBoundary, run.Evidence);
             }
         }
         catch (WorkOrderRejectedException exception)
@@ -174,4 +182,25 @@ public sealed class NodeWorker
 
     private static string Trim(string value) =>
         value.Length <= 160 ? value : value[..160] + "...";
+
+    private static string DurableSummary(HarnessResult run)
+    {
+        var parts = new List<string> { run.Summary };
+        if (run.Evidence.TryGetValue("stdout", out var stdout)
+            && stdout is string output
+            && !string.IsNullOrWhiteSpace(output))
+        {
+            parts.Add(output);
+        }
+        if (run.Outcome != "succeeded"
+            && run.Evidence.TryGetValue("stderr", out var stderr)
+            && stderr is string errors
+            && !string.IsNullOrWhiteSpace(errors))
+        {
+            parts.Add(errors);
+        }
+
+        var summary = string.Join("\n\n", parts);
+        return summary.Length <= 4000 ? summary : summary[..3990] + "\n... truncated";
+    }
 }

@@ -104,7 +104,7 @@ async def register_node(
                 # Elevated mode is never registrable; it requires per-run owner
                 # approval, so it cannot be granted by a node's own registration.
                 modes = [m for m in workspace.allowed_modes if m in ("readOnly", "workspaceWrite")]
-                await conn.execute(
+                node_workspace_id = await conn.fetchval(
                     """
                     INSERT INTO node_workspaces
                         (node_id, workspace_id, allowed_harnesses, allowed_modes)
@@ -112,12 +112,72 @@ async def register_node(
                     ON CONFLICT (node_id, workspace_id) DO UPDATE
                         SET allowed_harnesses = EXCLUDED.allowed_harnesses,
                             allowed_modes = EXCLUDED.allowed_modes
+                    RETURNING id
                     """,
                     node_id,
                     workspace.workspace_id,
                     workspace.allowed_harnesses,
                     modes,
                 )
+
+                # A node token is owner-bound and the local registry is the
+                # authority for which named roots/modes this machine exposes.
+                # Keep personal grants in sync with that declaration. Team
+                # sharing remains a separate owner-controlled decision.
+                await conn.execute(
+                    """
+                    UPDATE workspace_policy_grants
+                    SET revoked_at = now()
+                    WHERE node_workspace_id = $1
+                      AND team_id IS NULL
+                      AND NOT (mode = ANY($2::text[]))
+                      AND revoked_at IS NULL
+                    """,
+                    node_workspace_id,
+                    modes,
+                )
+                for mode in modes:
+                    grant_id = await conn.fetchval(
+                        """
+                        SELECT id FROM workspace_policy_grants
+                        WHERE node_workspace_id = $1 AND team_id IS NULL AND mode = $2
+                        ORDER BY granted_at DESC LIMIT 1
+                        """,
+                        node_workspace_id,
+                        mode,
+                    )
+                    if grant_id is None:
+                        await conn.execute(
+                            """
+                            INSERT INTO workspace_policy_grants
+                                (node_workspace_id, team_id, mode, granted_by)
+                            VALUES ($1, NULL, $2, $3)
+                            """,
+                            node_workspace_id,
+                            mode,
+                            caller.user_id,
+                        )
+                    else:
+                        await conn.execute(
+                            """
+                            UPDATE workspace_policy_grants
+                            SET revoked_at = NULL, granted_by = $2, granted_at = now()
+                            WHERE id = $1
+                            """,
+                            grant_id,
+                            caller.user_id,
+                        )
+
+            workspace_ids = [workspace.workspace_id for workspace in body.workspaces]
+            await conn.execute(
+                """
+                DELETE FROM node_workspaces
+                WHERE node_id = $1
+                  AND NOT (workspace_id = ANY($2::text[]))
+                """,
+                node_id,
+                workspace_ids,
+            )
 
             await audit.record_with(
                 conn,

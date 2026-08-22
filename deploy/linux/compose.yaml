@@ -112,6 +112,8 @@ services:
     environment:
       SERVER_CONTROL_API_URL: http://host.docker.internal:7444/server-control/api/automation
       SERVER_CONTROL_TOKEN_FILE: /run/secrets/server-control-token
+      SENTRY_GATEWAY_URL: http://gateway:8090
+      SENTRY_HERMES_API_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
     volumes:
       - /opt/server-control/data/hermes-automation.token:/run/secrets/server-control-token:ro
     expose:
@@ -294,7 +296,7 @@ services:
       - "127.0.0.1:8090:8090"
     security_opt:
       - no-new-privileges:true
-    networks: [sentry]
+    networks: [sentry, server-control-tools]
 
   webui:
     # The Frontir fork of hermes-webui. Built from a checkout of the fork's

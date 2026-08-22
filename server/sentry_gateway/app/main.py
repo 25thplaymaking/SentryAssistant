@@ -37,6 +37,7 @@ from .routes import profiles as profiles_routes
 from .routes import skills as skills_routes
 from .routes import teams as teams_routes
 from .routes import workorders as workorders_routes
+from .routes import workstation as workstation_routes
 
 
 def build_runtime(settings: Settings) -> AgentRuntime:
@@ -166,6 +167,7 @@ app.include_router(cron_routes.router)
 app.include_router(nodes_routes.router)
 app.include_router(teams_routes.router)
 app.include_router(workorders_routes.router)
+app.include_router(workstation_routes.router)
 
 
 @app.get("/health/live")
@@ -234,5 +236,4 @@ async def runtime_info() -> dict[str, Any]:
         "healthy": capabilities.is_healthy,
         "degradedReason": capabilities.degraded_reason,
     }
-
 

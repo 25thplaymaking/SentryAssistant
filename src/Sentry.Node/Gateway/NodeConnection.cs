@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -34,6 +35,86 @@ public sealed record RunResultRequest(
     [property: JsonPropertyName("status_boundary")] string StatusBoundary,
     [property: JsonPropertyName("evidence")] IReadOnlyDictionary<string, object> Evidence);
 
+public sealed record NodeTokenPair(
+    [property: JsonPropertyName("access_token")] string AccessToken,
+    [property: JsonPropertyName("refresh_token")] string RefreshToken,
+    [property: JsonPropertyName("device_id")] Guid DeviceId,
+    [property: JsonPropertyName("profile_id")] Guid ProfileId);
+
+/// <summary>
+/// Mutable node token pair with serialized refresh and durable rotation.
+///
+/// Gateway access tokens live for fifteen minutes. A daemon that only keeps the
+/// enrollment access token becomes permanently offline after that window, so a
+/// 401 refreshes once, persists the rotated pair, and retries the exact request.
+/// </summary>
+public sealed class NodeCredentialSession
+{
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private readonly Func<string, string, CancellationToken, Task>? _persist;
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
+
+    public NodeCredentialSession(
+        string accessToken,
+        string? refreshToken,
+        Func<string, string, CancellationToken, Task>? persist = null)
+    {
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new ArgumentException("An access token is required.", nameof(accessToken));
+
+        AccessToken = accessToken;
+        RefreshToken = refreshToken;
+        _persist = persist;
+    }
+
+    public string AccessToken { get; private set; }
+    public string? RefreshToken { get; private set; }
+
+    internal async Task RefreshAsync(
+        HttpClient client,
+        string rejectedAccessToken,
+        CancellationToken cancellationToken)
+    {
+        await _refreshGate.WaitAsync(cancellationToken);
+        try
+        {
+            // Another request may already have rotated the pair while this one
+            // waited. In that case the fresh access token is ready to retry.
+            if (!string.Equals(AccessToken, rejectedAccessToken, StringComparison.Ordinal))
+                return;
+
+            if (string.IsNullOrWhiteSpace(RefreshToken))
+                throw new InvalidOperationException(
+                    "The execution node credential expired and has no refresh token.");
+
+            using var response = await client.PostAsJsonAsync(
+                "api/auth/refresh",
+                new Dictionary<string, string> { ["refresh_token"] = RefreshToken },
+                Json,
+                cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var pair = await response.Content.ReadFromJsonAsync<NodeTokenPair>(Json, cancellationToken)
+                ?? throw new InvalidOperationException("The Gateway returned an empty token refresh.");
+            if (string.IsNullOrWhiteSpace(pair.AccessToken) || string.IsNullOrWhiteSpace(pair.RefreshToken))
+                throw new InvalidOperationException("The Gateway returned an incomplete token refresh.");
+
+            // Rotation invalidates the old refresh token immediately. Persist
+            // the replacement before accepting it in memory so a restart can
+            // never resurrect the retired token.
+            if (_persist is not null)
+                await _persist(pair.AccessToken, pair.RefreshToken, cancellationToken);
+
+            AccessToken = pair.AccessToken;
+            RefreshToken = pair.RefreshToken;
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
+    }
+}
+
 /// <summary>
 /// The node's only channel to the Gateway.
 ///
@@ -48,22 +129,34 @@ public sealed class NodeConnection : IDisposable
 
     private readonly HttpClient _client;
     private readonly bool _ownsClient;
+    private readonly NodeCredentialSession _credentials;
 
     public NodeConnection(string baseUrl, string accessToken, HttpClient? client = null)
+        : this(baseUrl, new NodeCredentialSession(accessToken, refreshToken: null), client)
+    {
+    }
+
+    public NodeConnection(
+        string baseUrl,
+        NodeCredentialSession credentials,
+        HttpClient? client = null)
     {
         _ownsClient = client is null;
         _client = client ?? new HttpClient();
         _client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
-        _client.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", accessToken);
+        _credentials = credentials;
         _client.Timeout = TimeSpan.FromSeconds(60);
     }
 
     public async Task<NodeRegistrationResponse?> RegisterAsync(
         NodeRegistrationRequest request, CancellationToken cancellationToken)
     {
-        using var response = await _client.PostAsJsonAsync(
-            "api/nodes/register", request, Json, cancellationToken);
+        using var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Post, "api/nodes/register")
+            {
+                Content = JsonContent.Create(request, options: Json)
+            },
+            cancellationToken);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<NodeRegistrationResponse>(
             Json, cancellationToken);
@@ -73,7 +166,9 @@ public sealed class NodeConnection : IDisposable
     public async Task<IReadOnlyList<DispatchedWorkOrder>> ClaimWorkAsync(
         CancellationToken cancellationToken)
     {
-        using var response = await _client.GetAsync("api/nodes/work", cancellationToken);
+        using var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Get, "api/nodes/work"),
+            cancellationToken);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<List<DispatchedWorkOrder>>(
             Json, cancellationToken) ?? [];
@@ -82,9 +177,34 @@ public sealed class NodeConnection : IDisposable
     public async Task SubmitResultAsync(
         Guid workOrderId, RunResultRequest result, CancellationToken cancellationToken)
     {
-        using var response = await _client.PostAsJsonAsync(
-            $"api/nodes/work/{workOrderId}/result", result, Json, cancellationToken);
+        using var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Post, $"api/nodes/work/{workOrderId}/result")
+            {
+                Content = JsonContent.Create(result, options: Json)
+            },
+            cancellationToken);
         response.EnsureSuccessStatusCode();
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(
+        Func<HttpRequestMessage> createRequest,
+        CancellationToken cancellationToken)
+    {
+        var attemptedToken = _credentials.AccessToken;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var request = createRequest();
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", attemptedToken);
+            var response = await _client.SendAsync(request, cancellationToken);
+            if (response.StatusCode != HttpStatusCode.Unauthorized || attempt == 1)
+                return response;
+
+            response.Dispose();
+            await _credentials.RefreshAsync(_client, attemptedToken, cancellationToken);
+            attemptedToken = _credentials.AccessToken;
+        }
+
+        throw new InvalidOperationException("The execution-node request could not be sent.");
     }
 
     public void Dispose()
