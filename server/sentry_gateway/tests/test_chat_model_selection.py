@@ -219,7 +219,13 @@ class TestAdvertisedList:
                 "models": [{"id": "gpt-5.4", "model": "x-ai/grok-4"}],
             },
         ]
-        client = build_client(FakeRuntime([PROFILE_A], providers=providers))
+        client = build_client(
+            FakeRuntime(
+                [PROFILE_A],
+                models=ADVERTISED + ("deepseek-v4-flash",),
+                providers=providers,
+            )
+        )
         payload = client.get("/api/chat/models", headers=bearer(PROFILE_A)).json()
 
         assert payload["groups"][0] == {
@@ -234,5 +240,14 @@ class TestAdvertisedList:
             ],
         }
         assert all(group["provider_id"] != "xai-oauth" for group in payload["groups"])
+        visible_ids = {
+            model["id"]
+            for group in payload["groups"]
+            for model in group["models"]
+        }
+        assert "gpt-5.4" not in visible_ids
         assert payload["groups"][1]["provider"] == "Sentry routes"
+        assert payload["groups"][1]["models"] == [
+            {"id": "deepseek-v4-flash", "label": "deepseek-v4-flash"}
+        ]
         assert payload["experiences"]["default"] == "chat"

@@ -119,17 +119,21 @@ async def _linked_model_groups(runtime, profile_id, models: tuple[str, ...]) -> 
 
     advertised = set(models)
     claimed: set[str] = set()
+    provider_owned: set[str] = set()
     groups: list[dict] = []
     providers = payload.get("data", []) if isinstance(payload, dict) else []
     for provider in providers:
-        if not isinstance(provider, dict) or not provider.get("authenticated"):
+        if not isinstance(provider, dict):
             continue
         routed = []
         for route in provider.get("models") or []:
             if not isinstance(route, dict):
                 continue
             alias = str(route.get("id") or "").strip()
-            if not alias or alias not in advertised or alias in claimed:
+            if not alias or alias not in advertised:
+                continue
+            provider_owned.add(alias)
+            if not provider.get("authenticated") or alias in claimed:
                 continue
             target = str(route.get("model") or alias).strip()
             routed.append({"id": alias, "label": target, "source_model": target})
@@ -144,7 +148,9 @@ async def _linked_model_groups(runtime, profile_id, models: tuple[str, ...]) -> 
             )
 
     unclaimed = [
-        model for model in models if model != "hermes-agent" and model not in claimed
+        model
+        for model in models
+        if model != "hermes-agent" and model not in provider_owned
     ]
     if unclaimed:
         groups.append(
