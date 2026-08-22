@@ -7,6 +7,77 @@ architecture; this file is the work ledger and the queue.
 
 ---
 
+## Clipboard image delivery — completed and deployed 2026-08-22
+
+Pasted and picked images now travel through the real Sentry execution path.
+The release is live for every user and requires no server-side action or manual
+client update.
+
+- Runtime heads are SentryAssistant `96258ce` and SentryWebUI `2086332d`.
+  Both are pushed to the private remotes and GitHub mirrors and are the exact
+  clean revisions checked out in `/srv/sentry/repo` and `/srv/sentry/webui`.
+- Sentry no longer hides the existing attachment button, preview tray, or drop
+  target. Pasting a clipboard image creates the same removable preview chip as
+  picking or dropping it. The composer accepts PNG, JPEG, GIF, and WebP, with
+  a maximum of five images and 20 MiB total per turn; rejection feedback can no
+  longer be overwritten by a false **Image pasted** confirmation.
+- The WebUI reads uploads only from its confined attachment inbox or the active
+  workspace, verifies size, MIME type, and magic bytes, and sends validated
+  image data through the authenticated Gateway turn. The Gateway repeats the
+  count, size, base64, format, and magic-byte checks instead of trusting the
+  browser or WebUI sidecar.
+- Hermes Chat keeps Nous `deepseek/deepseek-v4-flash` as its conversational
+  model. Because that DeepSeek route is text-only, the configured auxiliary
+  vision route (`google/gemini-3.7-flash` through the same Nous subscription)
+  first converts the image into explicitly quoted, untrusted visual reference
+  data. A failed vision pass fails the turn instead of letting DeepSeek invent
+  an answer without seeing the image. No Sol model or automatic route changed.
+- A native Codex Work turn follows the existing signed outbound workstation
+  path. Image inputs are persisted only until claim, hash-bound into the signed
+  work order, cleared transactionally at dispatch, revalidated by the Windows
+  node, written into a private per-turn temporary directory, and passed to the
+  official Codex App Server as `localImage`. The directory is removed after the
+  turn. Repository-review actions reject image input because the public review
+  method has no corresponding image contract.
+- Migration `017_work_order_input_images.sql` is applied. The hidden task
+  **Frontir Sentry Execution Node** is running
+  `C:\Users\Bryce\AppData\Local\SentryAssistant\node\releases\96258ce\sentry-node.exe`.
+  Before and after the rollout, resident counts were `cmd.exe=35`,
+  `node.exe=44`, with exactly one Sentry node process. The completed native
+  smoke left zero temporary image directories.
+- Live browser-to-DeepSeek proof uploaded a generated PNG containing the
+  seven-segment code `4827`. The production stream used
+  `deepseek/deepseek-v4-flash` via Nous, emitted tool and token events, and
+  answered exactly `IMAGE_CODE_4827`. The temporary QA conversation was then
+  deleted.
+- Live native proof uploaded the same independently coloured PNG, selected
+  `chatgpt-plan/gpt-5.4-mini`, `server-work`, read-only sandbox, low effort, and
+  the default collaboration mode. The Windows Codex App Server answered exactly
+  `NATIVE_IMAGE_CODE_4827`. Work order
+  `1a686c54-3fde-43ee-8310-de28cd9e1649` reached `readyForReview`, and its
+  retained image count is zero.
+- Rendered QA pasted a real PNG into the composer and observed one image preview
+  chip, the visible attachment tray, and no error overlay. Focused WebUI image,
+  paste, and composer coverage is **34 passed**. Gateway is **561 passed**;
+  Windows node tests are **111 total, 109 passed and 2 deliberate opt-in
+  skips**; the C# release build has **0 warnings and 0 errors**. The authoritative
+  Linux WebUI run completed with **15081 passed, 296 skipped, 2 xfailed, 1
+  xpassed, 13 warnings, and 45 subtests passed**.
+- All six production services are running and every configured healthcheck is
+  healthy. Eight existing browser auth sessions survived. Public `boot.js`,
+  `ui.js`, and `style.css` byte-match the committed sources. The live WebUI is
+  `source-d57e60183f3722e1`; `/sw.js` advertises
+  `hermes-shell-source-d57e60183f3722e1` with `Cache-Control: no-store`, so end
+  users discover the update without an operator or user cache-clearing step.
+
+Minimum architecture decision: reuse the existing paste/upload surface,
+authenticated Gateway turn, configured Hermes auxiliary vision model, signed
+work-order queue, and outbound Windows node. The release adds one bounded image
+field and one authenticated vision route; it adds no new service, dependency,
+credential store, inbound workstation listener, or generic file transport.
+
+---
+
 ## Composer-first native Codex tooling — completed and deployed 2026-08-22
 
 The full-width Codex configuration ribbon has been replaced with the
