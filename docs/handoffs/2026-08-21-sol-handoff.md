@@ -144,14 +144,15 @@ deployed, mirrored to GitHub, and live for end users.
 - **Live and healthy on grain** (`bishop@205.209.116.114`): gateway, webui,
   hermes (with healthcheck), postgres, cloudflared, server-control-mcp. Public
   edge `https://sentry.frontir.solutions` serves the current bundle.
-- **Deployed feature heads**: SentryAssistant `fb5f341` (branch
-  `25vid/sentry-foundation`, followed only by this documentation update),
-  SentryWebUI `1b94347e` (branch `frontir`) — mirrored across the local clone,
+- **Deployed feature heads**: SentryAssistant `9dd0f7c` (branch
+  `25vid/sentry-foundation`, followed only by handoff documentation) and
+  SentryWebUI `42840d6a` (branch `frontir`) — mirrored across the local clone,
   `/srv/git/*` bare repos, `/srv/sentry/*` checkouts, and GitHub.
-- **Test state**: the final application-code suite on grain completed with
-  **14993 passed, 268 skips, 2 xfailed, 1 xpassed, 0 failed, 0 errors**. The
-  subsequent Docker-only browser-version change passed its focused PWA suite
-  **47/47** and was proven in the rebuilt public image.
+- **Current test state**: Gateway **537 passed**; the complete grain WebUI run
+  finished with **15033 passed, 296 expected skips, 2 xfailed, 1 xpassed, and
+  45 subtests passed**. The public subscription JS and service worker both
+  return 200; the old server-command copy is absent and the new cache is served
+  with `no-store`.
 - **Unattended operation is armed**: `sentry-update.service` (boot; fetches the
   `github` remote explicitly — push to GitHub, restart the unit or reboot, and
   grain rolls forward with no workstation), `sentry-import.timer` (daily
