@@ -7,6 +7,96 @@ architecture; this file is the work ledger and the queue.
 
 ---
 
+## Linked workspaces, provider sessions, GitHub, and IDE handoff — completed and deployed 2026-08-22
+
+Sentry now provides one operational Work surface for the linked coding
+ecosystems and exact locations Bryce asked Hermes to act on. This is live for
+every user; neither users nor the operator have to install an update or run a
+server command.
+
+- The shipped functional revisions are SentryAssistant `be2e2c5` (Gateway
+  compatibility fix `42e043d`, Windows node and session-title release
+  `be2e2c5`) and SentryWebUI `b6a68932`. They are pushed to the private remotes
+  and GitHub mirrors. The hidden Windows task is running the headless binary at
+  `C:\Users\Bryce\AppData\Local\SentryAssistant\node\releases\be2e2c5\sentry-node.exe`.
+- Linked sessions are grouped by Codex and Claude Code in the Chat/Work sidebar.
+  Sync reads only the providers' local installation logs whose recorded working
+  directory is inside the selected allowlisted workspace. Selecting a row opens
+  a bounded, read-only transcript with a working **Watch live** control and an
+  **Open in IDE** handoff. Injected plugin, policy, and environment context is
+  excluded from titles and transcripts, so the list uses the first real user
+  request instead of repeated setup text.
+- The composer target control lists the owner's online linked workspaces and all
+  currently allowlisted Server Control services. Choosing a machine or service
+  from Chat automatically opens Work, persists the exact target on that
+  conversation, and sends the validated target to Hermes. A target is context,
+  not extra authority: it cannot enlarge a workspace, service allowlist,
+  approval policy, or sandbox.
+- The right Work inspector has live **Changes**, **GitHub**, and
+  **Integrations** tabs. Changes renders the repository's unified diff and
+  changed-item count. GitHub detects the linked machine's authenticated GitHub
+  CLI, repository remote, branch, and current pull request when the selected
+  repository has a GitHub remote. The current `server-work` and `enfusion`
+  workspace roots have no GitHub remote, so their GitHub tab truthfully says
+  **Not GitHub** instead of inventing repository data; GitHub CLI authentication
+  is nevertheless confirmed live. Integrations shows the real outbound Hermes
+  route, local Codex/Claude availability, and installed Visual Studio Code
+  handoff.
+- Provider OAuth remains model access, not a private-history API. Sentry can
+  sync and live-view local Codex and Claude Code sessions; it does not claim to
+  import ChatGPT.com, Claude.ai, or other provider-website conversations that
+  those services do not expose. The boundary is stated next to the session
+  list and in the inspector.
+- Every workstation operation is an owner-scoped, signed, read-only work order
+  claimed over the existing outbound node connection. The browser supplies
+  opaque node/workspace/session identifiers, never a filesystem path. Session
+  reads, diff output, and live watches are bounded; raw node paths and private
+  executable locations are removed. No inbound workstation listener, new
+  service, dependency, or general remote shell was added.
+- Production proof found **49** eligible local sessions in `server-work`
+  (**40 Codex, 9 Claude Code**), read a Codex transcript, completed a live watch,
+  inspected the Git repository, detected one installed IDE, confirmed GitHub
+  CLI authentication, and returned all **21** allowlisted services. The final
+  title/transcript audit found **0** injected-context titles and **0** injected
+  context messages. No provider-chat body or title was printed by the release
+  smoke.
+- Browser acceptance exercised target selection, automatic Chat-to-Work
+  switching, multi-workspace sync, a real provider transcript,
+  start/stop live watch, the Changes/GitHub/Integrations inspector, service
+  targets, and the installed-IDE action without launching the IDE during QA.
+  The final 1280 x 720 visual check kept linked sessions, work, and inspector
+  legible together; DeepSeek remained the local QA default. The release image
+  is `C:\Users\Bryce\.codex\visualizations\2026\08\21\01a026ad-069e-72d1-8b42-da64b642592b\sentry-integrations-release-qa.png`.
+- The authoritative WebUI run completed with **15089 passed, 296 skipped, 2
+  xfailed, 1 xpassed, 13 warnings, and 45 subtests passed**. The result-proxy
+  regression is **4/4**, Gateway is **568 passed** plus **4/4** timestamp/schema
+  coverage, and the exact SDK Windows node run is **114 total, 112 passed and 2
+  deliberate opt-in skips**. The final C# release build has no warnings or
+  errors.
+- All six production services are running and every configured healthcheck is
+  healthy. Gateway readiness reports signing, database, Hermes `0.19.0`,
+  cancellation, and session search healthy. The public service worker advertises
+  `hermes-shell-source-622e280571ced211` with `Cache-Control: no-store`; the
+  running WebUI and Gateway integration files byte-match their clean server
+  checkouts. There are zero unfinished or failed integration work orders and no
+  Gateway exception in the final production window. The Windows rollout left
+  exactly one Sentry node, no QA tunnel/server process, no QA listening port,
+  and did not increase `cmd.exe` (`27` before the node swap, `27` after).
+
+Two defects found by acceptance were corrected before release: the Gateway
+result reader now uses the production event table's `occurred_at` column, and
+the WebUI result proxy no longer shadows its URL encoder. Both were reproduced
+through the live path and covered by regressions.
+
+Minimum architecture decision: reuse the Gateway work-order queue, existing
+outbound Windows node, provider-local session logs, `git`/authenticated `gh`,
+the existing workspace panel, and the Server Control allowlist. One bounded
+integration harness and one owner-scoped Gateway route satisfy the request
+without another listener, agent, credential store, database migration, or
+speculative integration platform.
+
+---
+
 ## Profile-scoped agent behavior — completed and deployed 2026-08-22
 
 Sentry's single signed-in profile now has a concrete purpose: it controls how
