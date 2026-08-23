@@ -424,7 +424,8 @@ async def integration_action_result(
             raise HTTPException(status_code=404, detail="Integration action not found.")
         events = await conn.fetch(
             """
-            SELECT event_index, event_type, summary, payload, created_at
+            SELECT event_index, event_type, summary, payload,
+                   occurred_at AS created_at
             FROM work_order_events
             WHERE work_order_id = $1 AND event_index > $2
             ORDER BY event_index LIMIT 100

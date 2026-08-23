@@ -155,3 +155,53 @@ def test_action_refuses_unknown_provider_session_before_database_access():
     )
     assert response.status_code == 422
     assert pool.calls == []
+
+
+def test_action_result_reads_the_production_event_timestamp_column():
+    now = datetime.now(timezone.utc)
+
+    class ResultPool(FakePool):
+        def acquire(self):
+            pool = self
+
+            class Context:
+                async def __aenter__(self):
+                    class Connection:
+                        async def fetchrow(self, query, *args):
+                            pool.calls.append(("fetchrow", query, args))
+                            return {
+                                "id": args[0],
+                                "state": "succeeded",
+                                "workspace_id": "server-work",
+                                "title": "Inspect workspace",
+                                "outcome": "succeeded",
+                                "summary": "Complete",
+                                "finished_at": now,
+                            }
+
+                        async def fetch(self, query, *args):
+                            pool.calls.append(("fetch", query, args))
+                            return [{
+                                "event_index": 1,
+                                "event_type": "integration_result",
+                                "summary": "Complete",
+                                "payload": {},
+                                "created_at": now,
+                            }]
+
+                    return Connection()
+
+                async def __aexit__(self, *_):
+                    return False
+
+            return Context()
+
+    pool = ResultPool()
+    response = build(pool).get(
+        f"/api/integrations/actions/{uuid4()}",
+        headers=bearer(),
+    )
+    assert response.status_code == 200
+    assert response.json()["events"][0]["created_at"] == now.isoformat()
+    event_query = next(query for kind, query, _ in pool.calls if kind == "fetch")
+    assert "occurred_at AS created_at" in event_query
