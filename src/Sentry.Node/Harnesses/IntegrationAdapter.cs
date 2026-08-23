@@ -407,6 +407,8 @@ public sealed partial class IntegrationAdapter : IInteractiveHarnessAdapter
                     timestamp = String(root, "timestamp");
                 }
                 if (role is not ("user" or "assistant") || string.IsNullOrWhiteSpace(content)) continue;
+                if (role == "user") content = CleanUserContent(content);
+                if (string.IsNullOrWhiteSpace(content)) continue;
                 var remaining = MaxTranscriptCharacters - characters;
                 content = Truncate(content.Trim(), remaining);
                 characters += content.Length;
@@ -638,8 +640,39 @@ public sealed partial class IntegrationAdapter : IInteractiveHarnessAdapter
 
     private static string CleanTitle(string value)
     {
-        var collapsed = WhitespaceRegex().Replace(value ?? "", " ").Trim();
-        return Truncate(collapsed, 100);
+        var collapsed = WhitespaceRegex().Replace(CleanUserContent(value), " ").Trim();
+        return collapsed.Length <= 92 ? collapsed : collapsed[..91].TrimEnd() + "…";
+    }
+
+    private static string CleanUserContent(string value)
+    {
+        var candidate = (value ?? "").Trim();
+        var requestMarker = candidate.LastIndexOf("## My request:", StringComparison.OrdinalIgnoreCase);
+        if (requestMarker >= 0)
+        {
+            candidate = candidate[(requestMarker + "## My request:".Length)..].Trim();
+        }
+        else
+        {
+            var boundaryEnd = 0;
+            foreach (var marker in new[]
+            {
+                "</recommended_plugins>", "</INSTRUCTIONS>",
+                "</environment_context>", "</permissions instructions>"
+            })
+            {
+                var index = candidate.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                if (index >= 0) boundaryEnd = Math.Max(boundaryEnd, index + marker.Length);
+            }
+            if (boundaryEnd > 0 && candidate[boundaryEnd..].Trim().Length > 0)
+                candidate = candidate[boundaryEnd..].Trim();
+            else if (candidate.StartsWith("<recommended_plugins>", StringComparison.OrdinalIgnoreCase)
+                || candidate.StartsWith("# AGENTS.md instructions", StringComparison.OrdinalIgnoreCase)
+                || candidate.StartsWith("<environment_context", StringComparison.OrdinalIgnoreCase)
+                || candidate.StartsWith("<permissions instructions", StringComparison.OrdinalIgnoreCase))
+                return "";
+        }
+        return candidate;
     }
 
     private static string SourceLabel(string value, string fallback)

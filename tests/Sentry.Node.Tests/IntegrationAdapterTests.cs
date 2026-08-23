@@ -36,6 +36,24 @@ public class IntegrationAdapterTests
                 {
                     timestamp = "2026-08-22T12:01:00Z",
                     type = "response_item",
+                    payload = new
+                    {
+                        type = "message",
+                        role = "user",
+                        content = new[]
+                        {
+                            new
+                            {
+                                type = "input_text",
+                                text = "<recommended_plugins>generated context</recommended_plugins> # AGENTS.md instructions <INSTRUCTIONS>generated policy</INSTRUCTIONS> <environment_context>generated environment</environment_context>"
+                            }
+                        }
+                    }
+                }),
+                JsonSerializer.Serialize(new
+                {
+                    timestamp = "2026-08-22T12:01:01Z",
+                    type = "response_item",
                     payload = new { type = "message", role = "user", content = new[] { new { type = "input_text", text = "Inspect the Sentry surface" } } }
                 }),
                 JsonSerializer.Serialize(new
