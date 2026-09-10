@@ -51,6 +51,31 @@ class WorkOrderView(BaseModel):
     state: WorkOrderState
     mode: WorkOrderMode
     correlation_id: str
+    execution_node_id: UUID | None = None
+    workspace_id: str | None = None
+    harness: str | None = None
+    assigned_user_id: UUID | None = None
+
+
+class AssignWorkOrder(BaseModel):
+    execution_node_id: UUID
+    workspace_id: str = Field(min_length=1, max_length=128)
+    harness: str = Field(min_length=1, max_length=64)
+    assigned_user_id: UUID | None = None
+
+
+def _build_view(row) -> WorkOrderView:
+    return WorkOrderView(
+        id=row["id"],
+        title=row["title"],
+        state=WorkOrderState(row["state"]),
+        mode=WorkOrderMode(row["mode"]),
+        correlation_id=row["correlation_id"],
+        execution_node_id=row["execution_node_id"] if "execution_node_id" in row else None,
+        workspace_id=row["workspace_id"] if "workspace_id" in row else None,
+        harness=row["harness"] if "harness" in row else None,
+        assigned_user_id=row["assigned_user_id"] if "assigned_user_id" in row else None,
+    )
 
 
 class _DeniedTransition(Exception):
@@ -192,13 +217,43 @@ async def create_work_order(
                 ),
             )
 
-    return WorkOrderView(
-        id=row["id"],
-        title=row["title"],
-        state=WorkOrderState(row["state"]),
-        mode=WorkOrderMode(row["mode"]),
-        correlation_id=row["correlation_id"],
-    )
+    return _build_view(row)
+
+
+@router.get("", response_model=list[WorkOrderView])
+async def list_work_orders(
+    request: Request,
+    state: WorkOrderState | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    caller: Caller = Depends(require_caller),
+) -> list[WorkOrderView]:
+    """List work orders visible to the caller (requested by user, assigned to user,
+    or belonging to any active team of which the user is a member)."""
+    pool = _pool(request)
+    clamped_limit = max(1, min(limit, 200))
+    clamped_offset = max(0, offset)
+    async with pool.acquire() as conn:
+        query = """
+            SELECT w.id, w.title, w.state, w.mode, w.correlation_id,
+                   w.execution_node_id, w.workspace_id, w.harness, w.assigned_user_id
+            FROM work_orders w
+            WHERE (
+                w.requested_by = $1
+                OR w.assigned_user_id = $1
+                OR (w.team_id IS NOT NULL AND w.team_id IN (
+                    SELECT team_id FROM team_members WHERE user_id = $1 AND removed_at IS NULL
+                ))
+            )
+        """
+        params: list[object] = [caller.user_id]
+        if state is not None:
+            params.append(state.value)
+            query += f" AND w.state = ${len(params)}"
+        query += f" ORDER BY w.created_at DESC LIMIT ${len(params)+1} OFFSET ${len(params)+2}"
+        params.extend([clamped_limit, clamped_offset])
+        rows = await conn.fetch(query, *params)
+        return [_build_view(r) for r in rows]
 
 
 @router.get("/{work_order_id}", response_model=WorkOrderView)
@@ -210,7 +265,8 @@ async def get_work_order(
         row = await conn.fetchrow(
             """
             SELECT w.id, w.title, w.state, w.mode, w.correlation_id,
-                   w.requested_by, w.team_id
+                   w.requested_by, w.team_id, w.execution_node_id,
+                   w.workspace_id, w.harness, w.assigned_user_id
             FROM work_orders w WHERE w.id = $1
             """,
             work_order_id,
@@ -239,13 +295,172 @@ async def get_work_order(
                     status_code=status.HTTP_404_NOT_FOUND, detail="Not found."
                 )
 
-    return WorkOrderView(
-        id=row["id"],
-        title=row["title"],
-        state=WorkOrderState(row["state"]),
-        mode=WorkOrderMode(row["mode"]),
-        correlation_id=row["correlation_id"],
-    )
+    return _build_view(row)
+
+
+@router.post("/{work_order_id}/assign", response_model=WorkOrderView)
+async def assign_work_order(
+    work_order_id: UUID,
+    body: AssignWorkOrder,
+    request: Request,
+    caller: Caller = Depends(require_caller),
+) -> WorkOrderView:
+    """Assign execution identity (node, workspace, harness, assignee) to a work order.
+    Transitions draft/submitted/triaged orders into assigned."""
+    pool = _pool(request)
+    audit = AuditService(pool)
+    assignee_id = body.assigned_user_id or caller.user_id
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT w.*, n.owner_user_id AS node_owner_id
+                FROM work_orders w
+                LEFT JOIN execution_nodes n ON n.id = w.execution_node_id
+                WHERE w.id = $1
+                FOR UPDATE OF w
+                """,
+                work_order_id,
+            )
+            if row is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+
+            actor = await _load_actor(
+                conn,
+                caller,
+                row["team_id"] if "team_id" in row else None,
+                row["requested_by"] if "requested_by" in row else None,
+                row["assigned_user_id"] if "assigned_user_id" in row else None,
+                row["node_owner_id"] if "node_owner_id" in row else None,
+            )
+            if not (actor.is_requester or actor.role in (TeamRole.OWNER, TeamRole.MAINTAINER)):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only the requester or a team maintainer/owner may assign this work order.",
+                )
+
+            current_state = WorkOrderState(row["state"])
+            if current_state in (WorkOrderState.CLOSED, WorkOrderState.CANCELLED, WorkOrderState.RESOLVED, WorkOrderState.FAILED):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Work order is in terminal state '{current_state.value}' and cannot be assigned.",
+                )
+
+            # Validate execution node
+            node_row = await conn.fetchrow(
+                """
+                SELECT n.id, n.owner_user_id
+                FROM execution_nodes n
+                JOIN devices d ON d.id = n.device_id
+                WHERE n.id = $1 AND d.revoked_at IS NULL
+                """,
+                body.execution_node_id,
+            )
+            if node_row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Execution node not found or device revoked.",
+                )
+
+            # Validate workspace and harness
+            ws_row = await conn.fetchrow(
+                """
+                SELECT allowed_harnesses, allowed_modes
+                FROM node_workspaces
+                WHERE node_id = $1 AND workspace_id = $2
+                """,
+                body.execution_node_id,
+                body.workspace_id,
+            )
+            if ws_row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Workspace '{body.workspace_id}' is not enrolled on this execution node.",
+                )
+
+            allowed_harnesses = ws_row["allowed_harnesses"] or []
+            if body.harness not in allowed_harnesses:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Harness '{body.harness}' is not permitted for this workspace (allowed: {allowed_harnesses}).",
+                )
+
+            allowed_modes = ws_row["allowed_modes"] or []
+            if row["mode"] not in allowed_modes:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Work order mode '{row['mode']}' is not permitted for this workspace (allowed: {allowed_modes}).",
+                )
+
+            new_state = (
+                WorkOrderState.ASSIGNED.value
+                if current_state in (
+                    WorkOrderState.DRAFT,
+                    WorkOrderState.SUBMITTED,
+                    WorkOrderState.NEEDS_CLARIFICATION,
+                    WorkOrderState.TRIAGED,
+                )
+                else row["state"]
+            )
+
+            updated = await conn.fetchrow(
+                """
+                UPDATE work_orders
+                SET execution_node_id = $2,
+                    workspace_id = $3,
+                    harness = $4,
+                    assigned_user_id = $5,
+                    state = $6,
+                    completion_criteria = CASE
+                        WHEN cardinality(completion_criteria) = 0
+                        THEN ARRAY['Complete the requested outcome and report verifiable evidence.']::text[]
+                        ELSE completion_criteria
+                    END,
+                    updated_at = now()
+                WHERE id = $1
+                RETURNING id, title, state, mode, correlation_id, execution_node_id, workspace_id, harness, assigned_user_id
+                """,
+                work_order_id,
+                body.execution_node_id,
+                body.workspace_id,
+                body.harness,
+                assignee_id,
+                new_state,
+            )
+
+            if new_state != row["state"]:
+                await conn.execute(
+                    """
+                    INSERT INTO work_order_transitions
+                        (work_order_id, from_state, to_state, actor_user_id, reason, correlation_id)
+                    VALUES ($1,$2,$3,$4,$5,$6)
+                    """,
+                    work_order_id,
+                    row["state"],
+                    new_state,
+                    caller.user_id,
+                    f"Assigned to node {body.execution_node_id} on workspace {body.workspace_id}",
+                    row["correlation_id"],
+                )
+
+            await audit.record_with(
+                conn,
+                AuditEvent(
+                    action="workorder.assign",
+                    decision=Decision.ALLOWED,
+                    correlation_id=row["correlation_id"],
+                    actor_user_id=caller.user_id,
+                    actor_device_id=caller.device_id,
+                    profile_id=row["profile_id"],
+                    team_id=row["team_id"],
+                    target_kind="workorder",
+                    target_id=str(work_order_id),
+                    detail=f"assigned to node={body.execution_node_id} ws={body.workspace_id} harness={body.harness}",
+                ),
+            )
+
+    return _build_view(updated)
 
 
 @router.post("/{work_order_id}/transition", response_model=WorkOrderView)
@@ -414,10 +629,4 @@ async def _apply_transition(pool, audit, work_order_id, body, caller) -> WorkOrd
                 ),
             )
 
-    return WorkOrderView(
-        id=updated["id"],
-        title=updated["title"],
-        state=WorkOrderState(updated["state"]),
-        mode=WorkOrderMode(updated["mode"]),
-        correlation_id=updated["correlation_id"],
-    )
+    return _build_view(updated)

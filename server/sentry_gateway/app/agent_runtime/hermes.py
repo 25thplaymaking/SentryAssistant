@@ -747,69 +747,32 @@ class HermesRuntime(AgentRuntime):
                 continue
 
     async def search_sessions(self, query: ScopedSessionQuery) -> list[SessionHit]:
-        instance = self._instance(query.profile_id)
-        try:
-            response = await self._client.get(
-                instance.url("/api/plugins/kanban/board"),
-                headers=instance.auth_header,
-            )
-            response.raise_for_status()
-        except httpx.HTTPError:
-            return []
-
-        needle = query.query.lower()
-        hits: list[SessionHit] = []
-        for task in response.json().get("tasks", []):
-            haystack = f"{task.get('title', '')} {task.get('description', '')}".lower()
-            if needle in haystack:
-                hits.append(
-                    SessionHit(
-                        session_id=str(task.get("id", "")),
-                        profile_id=query.profile_id,
-                        snippet=str(task.get("title", ""))[:1000],
-                        occurred_at=_now(),
-                    )
-                )
-        return hits[: query.limit]
+        # Upstream Hermes does not expose session search via HTTP; sessions are
+        # queried directly from the Gateway PostgreSQL store.
+        return []
 
     async def read_work_board(self, profile_id: UUID) -> dict:
-        """The caller's own agent's Kanban board. Fails closed on an unregistered
-        profile so one person can never read another's board."""
-        instance = self._instance(profile_id)
-        try:
-            response = await self._client.get(
-                instance.url("/api/plugins/kanban/board"),
-                headers=instance.auth_header,
-            )
-            response.raise_for_status()
-        except httpx.HTTPError:
-            # NOTE (verified 2026-07-21): the hermes-agent API server does NOT
-            # expose /api/plugins/kanban/board (it 404s) — the API server serves
-            # only /v1/* + /v1/capabilities + /health. So on the current build this
-            # always returns empty. Kanban/memory/skills/cron cannot be served by
-            # proxying the Hermes API; they need either home-filesystem access or a
-            # Gateway-native store (see the plan's work-order-is-authoritative rule).
-            # This method is kept as the correct fail-closed shape for when a board
-            # source exists; it is intentionally empty-not-500 until then.
-            return {"tasks": [], "columns": []}
-        data = response.json()
-        return data if isinstance(data, dict) else {"tasks": []}
+        """The caller's own agent's Kanban board. Upstream Hermes does not expose
+        /api/plugins/kanban/board; Gateway postgres kanban board is authoritative."""
+        return {"tasks": [], "columns": []}
 
     async def project_work_order(self, projection: WorkOrderProjection) -> None:
         instance = self._instance(projection.profile_id)
-        response = await self._client.post(
-            instance.url("/api/plugins/kanban/tasks"),
-            headers=instance.auth_header,
-            json={
-                "title": projection.title,
-                "status": projection.state,
-                # The Sentry work-order ID is the idempotency key, so replaying a
-                # projection rebuilds the board without duplicating execution.
-                "external_id": projection.idempotency_key,
-                "assignee": instance.profile_name,
-            },
-        )
-        response.raise_for_status()
+        try:
+            response = await self._client.post(
+                instance.url("/api/plugins/kanban/tasks"),
+                headers=instance.auth_header,
+                json={
+                    "title": projection.title,
+                    "status": projection.state,
+                    "external_id": projection.idempotency_key,
+                    "assignee": instance.profile_name,
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPError:
+            # Hermes agent does not host this plugin endpoint; Gateway Postgres is authoritative.
+            return
 
     # ------------------------------------------------------------------
     # Sentry admin surface (patched into Hermes' api_server)

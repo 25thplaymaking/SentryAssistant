@@ -15,10 +15,11 @@ RECIPIENT = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
 
 class FakePool:
-    def __init__(self, granted=True, inbox_rows=None, messages=None):
+    def __init__(self, granted=True, inbox_rows=None, messages=None, grants_rows=None):
         self.granted = granted
         self.msg_id = uuid4()
         self.inbox_rows = inbox_rows or []
+        self.grants_rows = grants_rows or []
         self.inserts = []
         #: id -> {"recipient_profile_id", "read_at"}; backs the mark-read route.
         self.messages = messages or {}
@@ -30,6 +31,10 @@ class FakePool:
             async def __aenter__(self):
                 class Conn:
                     async def fetchval(self, query, *a):
+                        if "SELECT 1 FROM profiles" in query:
+                            return 1
+                        if "DELETE FROM agent_message_grants" in query:
+                            return a[1] if pool.granted else None
                         if "agent_message_grants" in query:
                             return 1 if pool.granted else None
                         if "INSERT INTO agent_messages" in query:
@@ -52,7 +57,18 @@ class FakePool:
                             return None
                         return None
 
+                    async def fetchrow(self, query, *a):
+                        if "INSERT INTO agent_message_grants" in query:
+                            return {
+                                "sender_profile_id": a[0],
+                                "recipient_profile_id": a[1],
+                                "created_at": datetime.now(timezone.utc),
+                            }
+                        return None
+
                     async def fetch(self, query, *a):
+                        if "FROM agent_message_grants" in query:
+                            return pool.grants_rows
                         return pool.inbox_rows
 
                     async def execute(self, *a):
@@ -174,3 +190,61 @@ class TestMarkRead:
 
     def test_unauthenticated_is_refused(self):
         assert build(FakePool()).post(f"/api/agent-messages/{uuid4()}/read").status_code == 401
+
+
+class TestMessageGrants:
+    def test_list_grants(self):
+        pool = FakePool(
+            grants_rows=[
+                {
+                    "sender_profile_id": SENDER,
+                    "recipient_profile_id": RECIPIENT,
+                    "created_at": datetime.now(timezone.utc),
+                }
+            ]
+        )
+        resp = build(pool).get("/api/agent-messages/grants", headers=bearer(SENDER))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["sender_profile_id"] == str(SENDER)
+        assert data[0]["recipient_profile_id"] == str(RECIPIENT)
+
+    def test_create_grant_success(self):
+        pool = FakePool()
+        resp = build(pool).post(
+            "/api/agent-messages/grants",
+            json={"recipient_profile_id": str(RECIPIENT)},
+            headers=bearer(SENDER),
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["sender_profile_id"] == str(SENDER)
+        assert data["recipient_profile_id"] == str(RECIPIENT)
+
+    def test_create_grant_self_rejected(self):
+        pool = FakePool()
+        resp = build(pool).post(
+            "/api/agent-messages/grants",
+            json={"recipient_profile_id": str(SENDER)},
+            headers=bearer(SENDER),
+        )
+        assert resp.status_code == 400
+        assert "self" in resp.json()["detail"].lower()
+
+    def test_delete_grant_success(self):
+        pool = FakePool(granted=True)
+        resp = build(pool).delete(
+            f"/api/agent-messages/grants/{RECIPIENT}",
+            headers=bearer(SENDER),
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": True}
+
+    def test_delete_grant_not_found(self):
+        pool = FakePool(granted=False)
+        resp = build(pool).delete(
+            f"/api/agent-messages/grants/{RECIPIENT}",
+            headers=bearer(SENDER),
+        )
+        assert resp.status_code == 404
