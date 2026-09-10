@@ -436,6 +436,228 @@ def _persist_subscription_routes(
     return routes
 
 
+def _clean_nous_models(models: Any) -> List[str]:
+    """Filter and normalize Nous models for live interactive agent turns.
+    
+    Excludes batch-only (:batch) and non-chat embedding/reranker models
+    (embed, embedding, bge-, e5-, minilm, mpnet, gte-, voyage).
+    """
+    out: List[str] = []
+    seen: set[str] = set()
+    exclude_keywords = (
+        ":batch", "embed", "embedding", "bge-", "e5-", "minilm", "mpnet", "gte-", "voyage"
+    )
+    for raw in models if isinstance(models, (list, tuple)) else []:
+        model = str(raw or "").strip()
+        if (
+            not model
+            or len(model) > 256
+            or any(ord(ch) < 32 for ch in model)
+            or any(kw in model.lower() for kw in exclude_keywords)
+            or model in seen
+        ):
+            continue
+        seen.add(model)
+        out.append(model)
+        if len(out) >= 500:
+            break
+    return sorted(out)
+
+
+def _fetch_live_nous_models() -> List[str]:
+    """Discover current models from Nous local proxy (port 8645) or hermes_cli."""
+    import urllib.request
+
+    models: List[str] = []
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:8645/v1/models",
+            headers={"Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            models = [
+                m.get("id")
+                for m in data.get("data", [])
+                if isinstance(m, dict) and m.get("id")
+            ]
+    except Exception:
+        pass
+    if not models:
+        try:
+            from hermes_cli.models import provider_model_ids
+
+            models = provider_model_ids("nous", force_refresh=True)
+        except Exception as exc:
+            logger.warning("Could not discover Nous models from catalog: %s", exc)
+            return []
+    return _clean_nous_models(models)
+
+
+def _persist_nous_routes(config_path: Path, live_routes: Dict[str, Any]) -> None:
+    """Atomically persist current Nous routes into config.yaml between managed markers."""
+    path = Path(config_path)
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+
+    begin = "        # SENTRY NOUS ROUTES (auto-synchronized)\n"
+    end = "        # END SENTRY NOUS ROUTES\n"
+
+    nous_models = []
+    for alias, cfg in live_routes.items():
+        if isinstance(cfg, dict) and cfg.get("provider") == "nous":
+            if "/" in alias or alias.startswith("~"):
+                nous_models.append(alias)
+    nous_models.sort()
+
+    entry_lines = []
+    for m in nous_models:
+        entry_lines.extend(
+            [
+                f"        {json.dumps(m)}:\n",
+                f"          model: {json.dumps(m)}\n",
+                f"          provider: nous\n",
+            ]
+        )
+
+    block = begin + "".join(entry_lines) + end
+    block_pattern = re.compile(re.escape(begin) + r".*?" + re.escape(end), re.S)
+    if block_pattern.search(text):
+        updated = block_pattern.sub(block, text, count=1)
+    else:
+        legacy_marker = (
+            "        # Interactive Nous catalog captured from the authenticated /v1/models\n"
+            "        # endpoint. Embedding-only and batch-only entries are intentionally\n"
+            "        # omitted: the WebUI picker drives live, tool-using agent turns.\n"
+        )
+        if legacy_marker in text:
+            pos = text.find(legacy_marker)
+            updated = text[:pos] + block
+        else:
+            marker_pattern = re.compile(r"^      model_routes:(?:[ \t]*\{\})?[ \t]*\n", re.M)
+            markers = list(marker_pattern.finditer(text))
+            if not markers:
+                return
+            marker = markers[0]
+            updated = text[: marker.end()] + block + text[marker.end() :]
+
+    import yaml
+
+    parsed = yaml.safe_load(updated)
+    try:
+        persisted = parsed["platforms"]["api_server"]["extra"]["model_routes"]
+    except (KeyError, TypeError) as exc:
+        raise ValueError("Updated model route registry failed validation.") from exc
+    if not isinstance(persisted, dict) or (nous_models and not any(k in persisted for k in nous_models[:5])):
+        raise ValueError("The updated Nous routes did not validate; no routes changed.")
+
+    temp = path.with_name(f".{path.name}.sentry-{uuid.uuid4().hex}.tmp")
+    try:
+        temp.write_text(updated, encoding="utf-8")
+        try:
+            os.chmod(temp, path.stat().st_mode)
+        except OSError:
+            pass
+        os.replace(temp, path)
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _sync_nous_routes(adapter, *, persist: bool = True) -> Dict[str, Any]:
+    """Ensure adapter._model_routes contains all current interactive models from Nous.
+    
+    Removes decommissioned models (such as stealth/ox-alpha) and adds newly
+    available models (such as z-ai/glm-5.3-flash). Retains friendly aliases
+    (like deepseek-v4-flash) and non-Nous routes.
+    """
+    live = getattr(adapter, "_model_routes", None)
+    if not isinstance(live, dict):
+        return {"added": 0, "removed": 0, "total": 0}
+
+    clean_models = _fetch_live_nous_models()
+    if not clean_models:
+        return {"added": 0, "removed": 0, "total": len(live)}
+    clean_set = set(clean_models)
+
+    removed = []
+    for alias, cfg in list(live.items()):
+        if isinstance(cfg, dict) and str(cfg.get("provider") or "") == "nous":
+            target = cfg.get("model", alias)
+            if ("/" in alias or alias.startswith("~")) and alias not in clean_set:
+                live.pop(alias, None)
+                removed.append(alias)
+            elif target not in clean_set and ("/" in str(target) or str(target).startswith("~")):
+                live.pop(alias, None)
+                removed.append(alias)
+
+    added = []
+    for model_id in clean_models:
+        if model_id not in live:
+            live[model_id] = {"model": model_id, "provider": "nous"}
+            added.append(model_id)
+
+    if (added or removed) and persist:
+        try:
+            config_path = Path(os.getenv("HERMES_HOME", "~/.hermes")).expanduser() / "config.yaml"
+            _persist_nous_routes(config_path, live)
+        except Exception as exc:
+            logger.warning("Could not persist updated Nous routes to config.yaml: %s", exc)
+
+    logger.info(
+        "Nous routes synchronized: %d added, %d removed (total active: %d)",
+        len(added), len(removed), len(live)
+    )
+    return {"added": len(added), "removed": len(removed), "total": len(live)}
+
+
+def _wrap_resolve_route(adapter) -> None:
+    """Wrap adapter._resolve_route with zero-day on-the-fly fallback to Nous."""
+    orig_resolve = getattr(adapter, "_resolve_route", None)
+    if orig_resolve is None or getattr(adapter, "_sentry_route_wrapped", False):
+        return
+
+    def _resolve_with_nous_fallback(model_alias: Any) -> Optional[Dict[str, Any]]:
+        route = orig_resolve(model_alias)
+        if route is not None:
+            return route
+        if isinstance(model_alias, str) and ("/" in model_alias or model_alias.startswith("~")):
+            dynamic_route = {"model": model_alias, "provider": "nous"}
+            live = getattr(adapter, "_model_routes", None)
+            if isinstance(live, dict):
+                live[model_alias] = dynamic_route
+            return dynamic_route
+        return None
+
+    adapter._resolve_route = _resolve_with_nous_fallback
+    adapter._sentry_route_wrapped = True
+
+
+async def _periodic_nous_sync(adapter) -> None:
+    """Periodically synchronize live Nous routes in the background."""
+    try:
+        await asyncio.sleep(2)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _sync_nous_routes, adapter)
+    except asyncio.CancelledError:
+        return
+    except Exception as exc:
+        logger.warning("Initial Nous sync error: %s", exc)
+
+    while True:
+        try:
+            await asyncio.sleep(6 * 3600)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _sync_nous_routes, adapter)
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning("Periodic Nous sync error: %s", exc)
+
+
 def _discover_subscription_models(provider: str) -> List[str]:
     """Ask Hermes' canonical provider catalog for the connected account."""
     from hermes_cli.models import provider_model_ids
@@ -452,7 +674,15 @@ async def _ensure_subscription_routes(
 
     dormant = getattr(adapter, "_sentry_subscription_routes", {}) or {}
     existing = dormant.get(provider, {}) if isinstance(dormant, dict) else {}
-    if provider == "nous" or (existing and not refresh):
+    if provider == "nous":
+        _activate_subscription_routes(adapter, provider)
+        if refresh:
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, _sync_nous_routes, adapter)
+            except Exception as exc:
+                logger.warning("Could not refresh Nous routes: %s", exc)
+    elif existing and not refresh:
         _activate_subscription_routes(adapter, provider)
     else:
         try:
@@ -477,6 +707,7 @@ async def _ensure_subscription_routes(
         "models": choices,
         "route_error": None if choices else "Connected, but this account reported no selectable models.",
     }
+
 
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -1204,6 +1435,13 @@ def _build_vision_handlers(adapter) -> List[tuple]:
 def build_routes(adapter) -> List[tuple]:
     """Return ``(method, path, handler)`` rows for the Sentry admin surface."""
     _initialize_subscription_routes(adapter)
+    _wrap_resolve_route(adapter)
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(_periodic_nous_sync(adapter))
+    except Exception as exc:
+        logger.debug("Could not schedule periodic Nous route sync: %s", exc)
     routes = (
         _build_auth_handlers(adapter)
         + _build_pending_handlers(adapter)

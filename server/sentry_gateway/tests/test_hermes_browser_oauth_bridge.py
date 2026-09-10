@@ -264,3 +264,105 @@ def test_bridge_uses_a_fixed_exec_without_a_shell_or_server_instructions():
     assert "safe_tail" not in source
     assert "cli_command" not in source
     assert "Log it in on the server" not in source
+
+
+def test_clean_nous_models_filter():
+    bridge = _load_bridge()
+    raw = [
+        "z-ai/glm-5.3-flash",
+        "z-ai/glm-5.3-flash:US",
+        "z-ai/glm-5.3-flash:batch",
+        "openai/text-embedding-3-large",
+        "thenlper/gte-large",
+        "voyageai/voyage-4",
+        "stealth/ox-alpha",
+        "~z-ai/glm-flash-latest",
+        "google/gemini-3.8-flash",
+    ]
+    cleaned = bridge._clean_nous_models(raw)
+    assert "z-ai/glm-5.3-flash" in cleaned
+    assert "z-ai/glm-5.3-flash:US" in cleaned
+    assert "~z-ai/glm-flash-latest" in cleaned
+    assert "google/gemini-3.8-flash" in cleaned
+    assert "stealth/ox-alpha" in cleaned
+    assert "z-ai/glm-5.3-flash:batch" not in cleaned
+    assert "openai/text-embedding-3-large" not in cleaned
+    assert "thenlper/gte-large" not in cleaned
+    assert "voyageai/voyage-4" not in cleaned
+
+
+def test_sync_nous_routes_removes_ox_alpha_and_adds_glm(monkeypatch):
+    bridge = _load_bridge()
+    adapter = SimpleNamespace(_model_routes={
+        "deepseek-v4-flash": {
+            "model": "deepseek/deepseek-v4-flash", "provider": "nous"
+        },
+        "stealth/ox-alpha": {
+            "model": "stealth/ox-alpha", "provider": "nous"
+        },
+        "qwen3.6-35b-local": {
+            "model": "/models/Qwen.gguf", "provider": "custom"
+        },
+    })
+    monkeypatch.setattr(
+        bridge,
+        "_fetch_live_nous_models",
+        lambda: ["deepseek/deepseek-v4-flash", "z-ai/glm-5.3-flash", "z-ai/glm-5.3-flash:US"],
+    )
+
+    result = bridge._sync_nous_routes(adapter, persist=False)
+
+    assert "stealth/ox-alpha" not in adapter._model_routes
+    assert "z-ai/glm-5.3-flash" in adapter._model_routes
+    assert "z-ai/glm-5.3-flash:US" in adapter._model_routes
+    assert "deepseek-v4-flash" in adapter._model_routes
+    assert "qwen3.6-35b-local" in adapter._model_routes
+    assert adapter._model_routes["z-ai/glm-5.3-flash"] == {
+        "model": "z-ai/glm-5.3-flash", "provider": "nous"
+    }
+    assert result["removed"] == 1
+    assert result["added"] >= 2
+
+
+def test_wrap_resolve_route_falls_back_to_nous_for_unmapped_model():
+    bridge = _load_bridge()
+    adapter = SimpleNamespace(_model_routes={
+        "deepseek-v4-flash": {
+            "model": "deepseek/deepseek-v4-flash", "provider": "nous"
+        },
+    })
+    adapter._resolve_route = lambda alias: adapter._model_routes.get(alias)
+
+    bridge._wrap_resolve_route(adapter)
+
+    # Existing mapped route
+    assert adapter._resolve_route("deepseek-v4-flash") == {
+        "model": "deepseek/deepseek-v4-flash", "provider": "nous"
+    }
+    # Unmapped vendor/model should fall back to Nous and be registered in _model_routes
+    fallback = adapter._resolve_route("z-ai/glm-5.3-flash")
+    assert fallback == {"model": "z-ai/glm-5.3-flash", "provider": "nous"}
+    assert "z-ai/glm-5.3-flash" in adapter._model_routes
+
+    # Bare non-vendor non-tilde string should not fall back
+    assert adapter._resolve_route("unknown-unprefixed-model") is None
+
+
+def test_ensure_subscription_routes_nous_refresh(monkeypatch):
+    bridge = _load_bridge()
+    adapter = SimpleNamespace(
+        _model_routes={"stealth/ox-alpha": {"model": "stealth/ox-alpha", "provider": "nous"}},
+        _sentry_subscription_routes={"nous": {}},
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_fetch_live_nous_models",
+        lambda: ["z-ai/glm-5.3-flash"],
+    )
+
+    result = asyncio.run(bridge._ensure_subscription_routes(adapter, "nous", refresh=True))
+
+    assert "stealth/ox-alpha" not in adapter._model_routes
+    assert "z-ai/glm-5.3-flash" in adapter._model_routes
+    assert any(m["id"] == "z-ai/glm-5.3-flash" for m in result["models"])
+
