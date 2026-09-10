@@ -20,6 +20,7 @@ from ..agent_runtime.base import RuntimeEvent, RuntimeTurn, SessionScope
 from ..agent_runtime.endpoints import refresh_profile_endpoint
 from ..agent_runtime.hermes import UnknownProfileError
 from ..audit.service import AuditEvent, AuditService, Decision
+from ..profile_memory_context import load_profile_memory_context
 from .deps import Caller, require_caller
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -31,6 +32,8 @@ class ChatTurnRequest(BaseModel):
     session_id: str | None = None
     #: Untrusted connector/document text, passed to the runtime as quoted data.
     quoted_context: list[str] = Field(default_factory=list)
+    #: Applies only to the private Gateway turn, never a team/workspace turn.
+    use_profile_memory: bool = True
 
 
 def _sse(event: RuntimeEvent) -> str:
@@ -112,6 +115,18 @@ async def chat_turn(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Audit storage is unavailable; refusing to run an unrecorded turn.",
         )
+    memory_context: tuple[str, ...] = ()
+    if body.use_profile_memory:
+        try:
+            memory_context = await load_profile_memory_context(
+                request.app.state.pool, caller.profile_id
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Personal memory is unavailable; this turn was not started. Retry or explicitly disable profile memory for this turn.",
+            ) from exc
+
     if audit is not None:
         # The prompt itself is never stored in audit; only that a turn happened,
         # by whom, in which profile/session. A turn that cannot be audited is
@@ -141,7 +156,7 @@ async def chat_turn(
         profile_id=caller.profile_id,
         prompt=body.prompt,
         correlation_id=correlation_id,
-        quoted_context=tuple(body.quoted_context),
+        quoted_context=tuple(body.quoted_context) + memory_context,
     )
 
     async def stream():
@@ -152,7 +167,12 @@ async def chat_turn(
     return StreamingResponse(
         stream(),
         media_type="text/event-stream",
-        headers={"X-Sentry-Correlation-Id": correlation_id},
+        headers={
+            "X-Sentry-Correlation-Id": correlation_id,
+            "X-Sentry-Memory": (
+                "included" if memory_context else "empty" if body.use_profile_memory else "disabled"
+            ),
+        },
     )
 
 
