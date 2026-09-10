@@ -269,3 +269,33 @@ class TestOAuthFlow:
             ("logout", PROFILE_A, "anthropic", None),
             ("logout", PROFILE_A, "anthropic", "abc123"),
         ]
+
+    def test_routed_runtime_forwards_all_admin_surfaces(self):
+        from app.agent_runtime.routed import RoutedRuntime
+
+        raw_runtime = FakeRuntime()
+        runtime = RoutedRuntime(raw_runtime)
+        client = build_client(runtime)
+
+        resp = client.get("/api/agent/pending/memory", headers=bearer(PROFILE_A))
+        assert resp.status_code == 200
+        assert ("list_pending", PROFILE_A, "memory") in raw_runtime.calls
+
+        resp = client.post(
+            "/api/agent/pending/memory/p1/approve", headers=bearer(PROFILE_A)
+        )
+        assert resp.status_code == 200
+        assert ("decide", PROFILE_A, "memory", "p1", True) in raw_runtime.calls
+
+        resp = client.post(
+            "/api/agent/auth/oauth/start",
+            headers=bearer(PROFILE_A),
+            json={"provider": "anthropic"},
+        )
+        assert resp.status_code == 200
+        assert ("start", PROFILE_A, "anthropic") in raw_runtime.calls
+
+        resp = client.get("/api/agent/auth/oauth/f1", headers=bearer(PROFILE_A))
+        assert resp.status_code == 200
+        assert ("oauth_status", PROFILE_A, "f1") in raw_runtime.calls
+

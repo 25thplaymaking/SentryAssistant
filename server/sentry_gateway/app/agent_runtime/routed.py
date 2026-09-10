@@ -70,3 +70,34 @@ class RoutedRuntime:
     @endpoint_refresher.setter
     def endpoint_refresher(self, value):
         self.primary.endpoint_refresher = value
+
+    async def list_pending_writes(self, profile_id, subsystem):
+        return await self.primary.list_pending_writes(profile_id, subsystem)
+
+    async def decide_pending_write(
+        self, profile_id, subsystem, pending_id, *, approve: bool
+    ):
+        return await self.primary.decide_pending_write(
+            profile_id, subsystem, pending_id, approve=approve
+        )
+
+    async def start_oauth(self, profile_id, provider):
+        return await self.primary.start_oauth(profile_id, provider)
+
+    async def complete_oauth(self, profile_id, flow_id, code, label=None):
+        return await self.primary.complete_oauth(
+            profile_id, flow_id, code, label=label
+        )
+
+    async def oauth_status(self, profile_id, flow_id):
+        return await self.primary.oauth_status(profile_id, flow_id)
+
+    async def cancel_oauth(self, profile_id, flow_id):
+        return await self.primary.cancel_oauth(profile_id, flow_id)
+
+    async def logout_provider(self, profile_id, provider):
+        return await self.primary.logout_provider(profile_id, provider)
+
+    def __getattr__(self, name: str):
+        return getattr(self.primary, name)
+
