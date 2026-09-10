@@ -24,6 +24,10 @@ KEY = "chat-test-signing-key-padded-well-past-the-32-byte-minimum"
 PROFILE_A = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 PROFILE_B = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 UNPROVISIONED = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+PNG_DATA_URL = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 def _now():
@@ -36,6 +40,7 @@ class FakeRuntime:
     def __init__(self, known_profiles):
         self._known = set(known_profiles)
         self.turns: list[tuple[UUID, str]] = []
+        self.requests = []
         self.sessions_created: list[UUID] = []
 
     def register(self, instance):
@@ -56,6 +61,7 @@ class FakeRuntime:
     async def send_turn(self, request):
         if request.profile_id not in self._known:
             raise UnknownProfileError(str(request.profile_id))
+        self.requests.append(request)
         self.turns.append((request.profile_id, request.prompt))
         yield RuntimeEvent(
             type=RuntimeEventType.MESSAGE,
@@ -87,6 +93,44 @@ class FakePool:
                 class Conn:
                     async def execute(self, sql, *args):
                         pool.executed.append((sql, args))
+
+                    async def fetch(self, sql, *args):
+                        return []
+
+                    async def fetchrow(self, sql, *args):
+                        return None
+
+                return Conn()
+
+            async def __aexit__(self, *_):
+                return False
+
+        return Ctx()
+
+
+class TargetPool(FakePool):
+    """Adds the owner-scoped workspace lookup used by explicit Sentry targets."""
+
+    def acquire(self):
+        pool = self
+
+        class Ctx:
+            async def __aenter__(self):
+                class Conn:
+                    async def execute(self, sql, *args):
+                        pool.executed.append((sql, args))
+
+                    async def fetch(self, sql, *args):
+                        return []
+
+                    async def fetchrow(self, sql, *args):
+                        if "FROM execution_nodes" in sql:
+                            return {
+                                "id": UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+                                "name": "Bryce's PC",
+                                "workspace_id": "server-work",
+                            }
+                        return None
 
                 return Conn()
 
@@ -136,6 +180,29 @@ class TestRouting:
         assert resp.status_code == 200
         assert runtime.turns == [(PROFILE_A, "hi")]
 
+    def test_workspace_target_is_resolved_and_forwarded_to_hermes(self):
+        runtime = FakeRuntime([PROFILE_A])
+        client = build_client(runtime, pool=TargetPool())
+        response = client.post(
+            "/api/chat/turn",
+            json={
+                "prompt": "Inspect the selected service workspace",
+                "target": {
+                    "kind": "workspace",
+                    "node_id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+                    "workspace_id": "server-work",
+                },
+            },
+            headers=bearer(PROFILE_A),
+        )
+        assert response.status_code == 200
+        assert runtime.requests[0].target_context == {
+            "kind": "workspace",
+            "node_id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+            "node_name": "Bryce's PC",
+            "workspace_id": "server-work",
+        }
+
     def test_two_profiles_route_to_their_own_agents(self):
         runtime = FakeRuntime([PROFILE_A, PROFILE_B])
         client = build_client(runtime, pool=FakePool())
@@ -152,6 +219,36 @@ class TestRouting:
         assert "hello" in resp.text
         assert "[DONE]" in resp.text
         assert resp.headers.get("x-sentry-correlation-id")
+
+    def test_valid_pasted_image_reaches_the_selected_runtime(self):
+        runtime = FakeRuntime([PROFILE_A])
+        client = build_client(runtime, pool=FakePool())
+
+        resp = client.post(
+            "/api/chat/turn",
+            json={"prompt": "What is in this image?", "images": [{"data_url": PNG_DATA_URL}]},
+            headers=bearer(PROFILE_A),
+        )
+
+        assert resp.status_code == 200
+        assert len(runtime.requests) == 1
+        assert runtime.requests[0].images[0].data_url == PNG_DATA_URL
+
+    def test_non_image_data_url_is_refused_before_runtime_execution(self):
+        runtime = FakeRuntime([PROFILE_A])
+        client = build_client(runtime, pool=FakePool())
+
+        resp = client.post(
+            "/api/chat/turn",
+            json={
+                "prompt": "Read this",
+                "images": [{"data_url": "data:text/plain;base64,aGVsbG8="}],
+            },
+            headers=bearer(PROFILE_A),
+        )
+
+        assert resp.status_code == 422
+        assert runtime.requests == []
 
 
 class TestFailClosed:

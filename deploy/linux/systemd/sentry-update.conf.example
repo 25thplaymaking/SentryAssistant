@@ -1,0 +1,14 @@
+# Sentry auto-update, read by deploy/linux/sentry-update.sh.
+#
+# 1 = on boot, fast-forward the checkouts from the `github` remote and rebuild
+#     if anything moved. 0 = never fetch; just bring the stack up as it is.
+#
+# Turning this OFF is the rollback if an update ever ships something bad:
+#   sudo sed -i 's/^SENTRY_AUTO_UPDATE=.*/SENTRY_AUTO_UPDATE=0/' /etc/sentry-update.conf
+#
+# The updater refuses to touch a checkout with local modifications, and only
+# ever fast-forwards -- it will not merge, rebase, or discard your work.
+SENTRY_AUTO_UPDATE=1
+SENTRY_UPDATE_REMOTE=github
+SENTRY_REPO_BRANCH=25vid/sentry-foundation
+SENTRY_WEBUI_BRANCH=frontir

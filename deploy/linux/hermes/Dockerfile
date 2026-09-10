@@ -47,7 +47,41 @@ RUN pip install --no-cache-dir --user aiohttp
 # tools/mcp_tool.py sets _MCP_AVAILABLE=False and register_mcp_servers() returns
 # an empty list, so every configured MCP server is silently ignored. Verified on
 # 0.19.0: with the SDK installed the same config registered 14 tools.
-RUN pip install --no-cache-dir --user mcp
+#
+# PINNED, and the pin is load-bearing (2026-08-18). This line used to be a bare
+# `mcp`, and because it is an *optional* extra pip does not enforce the
+# `mcp==1.26.0` that hermes-agent 0.19.0 declares -- so the Aug 15 build silently
+# picked up mcp 2.0.0 and MCP broke in a way that looks like a config error:
+#
+#   - 2.0.0 removed the deprecated `streamablehttp_client` symbol. mcp_tool.py
+#     derives its _MCP_HTTP_AVAILABLE flag from THAT name only, so HTTP
+#     transport reported itself unavailable and every streamable-http server
+#     failed with "Upgrade the mcp package to get HTTP support" -- while the
+#     package was in fact NEWER than required.
+#   - Forcing past that flag only reaches the next break: 2.0.0's
+#     `streamable_http_client` yields 2 values where 0.19.0 unpacks 3
+#     ("not enough values to unpack (expected 3, got 2)").
+#
+# Keep this pin matched to whatever hermes-agent's METADATA requires; check with
+#   pip show -f hermes-agent | grep -i "requires-dist.*mcp"
+# after any HERMES_VERSION bump.
+RUN pip install --no-cache-dir --user 'mcp==1.26.0'
+
+# Web search backend. The `web` toolset ships ENABLED but is gated shut by
+# check_web_api_key(): with no backend credential and no importable provider it
+# reports unavailable, and web_search/web_extract silently never register. The
+# agent then has no internet access at all, which looks like a model limitation
+# rather than a missing dependency.
+#
+# ddgs is the only supported backend whose availability is decided by a PACKAGE
+# rather than an API key (_ddgs_package_importable), so it needs no account, no
+# secret in .env, and no per-user signup. The keyed alternatives
+# (TAVILY/EXA/BRAVE_SEARCH/FIRECRAWL/PARALLEL_API_KEY) and self-hosted
+# SEARXNG_URL still work and take precedence when set.
+#
+# PINNED for the same reason `mcp` is: an unpinned optional dependency is how
+# this image silently acquired an incompatible major version once already.
+RUN pip install --no-cache-dir --user 'ddgs==9.6.0'
 
 # Fix the api_server path so configured MCP servers reach the agent.
 #
@@ -62,11 +96,34 @@ RUN pip install --no-cache-dir --user mcp
 COPY --chown=hermes:hermes patches/api_server_mcp_discovery.py /tmp/
 RUN python3 /tmp/api_server_mcp_discovery.py
 
+# Add the Sentry admin HTTP surface: credential OAuth and pending-write approval.
+#
+# Hermes keeps both in the CLI. That is fine for a single-box install and fatal
+# for this one: the WebUI container never loads the agent, so a CLI-only OAuth
+# flow needs a TTY on the server, and memory writes staged by
+# `memory.write_approval: true` pile up on disk with nothing able to approve
+# them. The handlers reuse Hermes' own OAuth constants, credential-pool
+# persistence and write_approval store rather than reimplementing any of it.
+#
+# Like the MCP patch above, this FAILS THE BUILD if its anchor moves, so an
+# upgrade cannot quietly restore the unreachable state it exists to fix.
+COPY --chown=hermes:hermes sentry_admin.py /home/hermes/.local/lib/python3.11/site-packages/sentry_admin.py
+COPY --chown=hermes:hermes patches/api_server_admin_surface.py /tmp/
+RUN python3 /tmp/api_server_admin_surface.py
+
+# Enforce Sentry Chat's request-scoped capability surface. Work sends no
+# override and therefore retains the profile's configured Hermes tools. This is
+# applied after the other API-server patches and fails the build if the pinned
+# Hermes source no longer matches the verified path.
+COPY --chown=hermes:hermes patches/api_server_sentry_experience.py /tmp/
+RUN python3 /tmp/api_server_sentry_experience.py
+
 COPY --chown=hermes:hermes server_control_mcp.py /opt/sentry-tools/server_control_mcp.py
+COPY --chown=hermes:hermes --chmod=755 start-hermes.sh /home/hermes/start-hermes.sh
 
-EXPOSE 8642
+EXPOSE 8642 8645
 
-# The API server binds loopback by default; inside a container it must bind the
-# container interface so only the compose network can reach it. It is never
-# published to a public interface.
-CMD ["hermes", "gateway"]
+# Start the agent gateway and the raw Nous subscription proxy together. The
+# wrapper treats either child exiting as a container failure and reaps both, so
+# Docker's restart policy restores the complete inference path as one unit.
+CMD ["/home/hermes/start-hermes.sh"]

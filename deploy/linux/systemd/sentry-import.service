@@ -1,0 +1,18 @@
+[Unit]
+Description=Import agent sessions from other harnesses into Sentry
+Documentation=file:///srv/sentry/repo/deploy/linux/import-agent-sessions.py
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Must be the user who OWNS the transcripts: they live under ~/.claude and
+# ~/.codex and are mode 0600. Running this as root would read a different
+# home and silently import nothing.
+User=bishop
+ExecStart=/srv/sentry/repo/deploy/linux/import-agent-sessions.py
+# Hashing several MB of transcripts is quick, but a long-running session file
+# can grow; do not kill a legitimate import.
+TimeoutStartSec=1800
+StandardOutput=journal
+StandardError=journal

@@ -161,7 +161,8 @@ async def create_work_order(
                 body.title,
                 body.prompt,
                 body.mode.value,
-                body.completion_criteria,
+                body.completion_criteria
+                or ["Complete the requested outcome and report verifiable evidence."],
                 correlation_id,
                 expires_at,
             )
@@ -349,7 +350,14 @@ async def _apply_transition(pool, audit, work_order_id, body, caller) -> WorkOrd
 
             updated = await conn.fetchrow(
                 """
-                UPDATE work_orders SET state = $2, updated_at = now()
+                UPDATE work_orders
+                SET state = $2,
+                    completion_criteria = CASE
+                        WHEN cardinality(completion_criteria) = 0
+                        THEN ARRAY['Complete the requested outcome and report verifiable evidence.']::text[]
+                        ELSE completion_criteria
+                    END,
+                    updated_at = now()
                 WHERE id = $1
                 RETURNING id, title, state, mode, correlation_id
                 """,

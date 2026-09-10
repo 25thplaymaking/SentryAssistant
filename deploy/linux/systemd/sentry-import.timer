@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily import of agent sessions into Sentry
+Documentation=file:///srv/sentry/repo/deploy/linux/import-agent-sessions.py
+
+[Timer]
+OnCalendar=daily
+# Catch up after downtime. The import is idempotent -- it keys on a content
+# hash -- so a missed day costs one extra pass, and skipping it would leave a
+# permanent hole in the usage record.
+Persistent=true
+# Without this every daily timer on the box fires at exactly 00:00 together.
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

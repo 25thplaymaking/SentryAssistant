@@ -12,11 +12,15 @@
 # exists for, and the operator, not the teammate, carries the consequence.
 
 model:
-  # Registry name is "openai-api" (native OpenAI), NOT "openai". Leaving this
-  # unset while OPENAI_API_KEY is exported resolves to "openrouter" and sends
-  # requests to the wrong endpoint.
-  provider: openai-api
-  model: gpt-5.4
+  # Each teammate authenticates their own Nous profile after provisioning.
+  provider: nous
+  default: deepseek/deepseek-v4-flash
+  context_length: 131072
+
+image_gen:
+  provider: fal
+  model: fal-ai/flux-2/klein/9b
+  use_gateway: true
 
 memory:
   # Durable memories are proposed, then shown to the profile's owner before they
@@ -45,6 +49,852 @@ api_server:
   # compose network can reach it. Never published to a host or public port.
   host: 0.0.0.0
   port: 8642
+
+platforms:
+  api_server:
+    extra:
+      model_routes:
+        # Friendly alias retained as the deployment default.
+        deepseek-v4-flash:
+          model: deepseek/deepseek-v4-flash
+          provider: nous
+        # Interactive Nous catalog captured from the authenticated /v1/models
+        # endpoint. Embedding-only and batch-only entries are intentionally
+        # omitted: the WebUI picker drives live, tool-using agent turns.
+        "meta/muse-spark-1.2-contributor":
+          model: "meta/muse-spark-1.2-contributor"
+          provider: nous
+        "deepseek/deepseek-v4-flash-vision-exp":
+          model: "deepseek/deepseek-v4-flash-vision-exp"
+          provider: nous
+        "stealth/ox-alpha":
+          model: "stealth/ox-alpha"
+          provider: nous
+        "~z-ai/glm-latest":
+          model: "~z-ai/glm-latest"
+          provider: nous
+        "z-ai/glm-5.3":
+          model: "z-ai/glm-5.3"
+          provider: nous
+        "qwen/qwen3.8-27b":
+          model: "qwen/qwen3.8-27b"
+          provider: nous
+        "google/gemini-3.7-flash":
+          model: "google/gemini-3.7-flash"
+          provider: nous
+        "bytedance-seed/seed-2-1-turbo":
+          model: "bytedance-seed/seed-2-1-turbo"
+          provider: nous
+        "qwen/qwen3.8-2.4t-a95b":
+          model: "qwen/qwen3.8-2.4t-a95b"
+          provider: nous
+        "bytedance-seed/seed-2.0-code":
+          model: "bytedance-seed/seed-2.0-code"
+          provider: nous
+        "deepseek/deepseek-v4-pro-0813":
+          model: "deepseek/deepseek-v4-pro-0813"
+          provider: nous
+        "nvidia/nemotron-3.5-lightning":
+          model: "nvidia/nemotron-3.5-lightning"
+          provider: nous
+        "sakana/sakana-namazu":
+          model: "sakana/sakana-namazu"
+          provider: nous
+        "upstage/solar-pro4":
+          model: "upstage/solar-pro4"
+          provider: nous
+        "meta/muse-glimmer-30b":
+          model: "meta/muse-glimmer-30b"
+          provider: nous
+        "meta/muse-spark-1.2":
+          model: "meta/muse-spark-1.2"
+          provider: nous
+        "qwen/qwen3.8-max":
+          model: "qwen/qwen3.8-max"
+          provider: nous
+        "~deepseek/deepseek-v4-flash-latest":
+          model: "~deepseek/deepseek-v4-flash-latest"
+          provider: nous
+        "deepseek/deepseek-v4-flash-0731":
+          model: "deepseek/deepseek-v4-flash-0731"
+          provider: nous
+        "thinkingmachines/inkling-small":
+          model: "thinkingmachines/inkling-small"
+          provider: nous
+        "qwen/qwen3.7-flash":
+          model: "qwen/qwen3.7-flash"
+          provider: nous
+        "anthropic/claude-opus-5-fast":
+          model: "anthropic/claude-opus-5-fast"
+          provider: nous
+        "inclusionai/ling-3.0-flash":
+          model: "inclusionai/ling-3.0-flash"
+          provider: nous
+        "poolside/laguna-s-2.1":
+          model: "poolside/laguna-s-2.1"
+          provider: nous
+        "poolside/laguna-s-2.1:free":
+          model: "poolside/laguna-s-2.1:free"
+          provider: nous
+        "google/gemini-3.6-flash":
+          model: "google/gemini-3.6-flash"
+          provider: nous
+        "google/gemini-3.5-flash-lite":
+          model: "google/gemini-3.5-flash-lite"
+          provider: nous
+        "meituan/longcat-2.0":
+          model: "meituan/longcat-2.0"
+          provider: nous
+        "thinkingmachines/inkling":
+          model: "thinkingmachines/inkling"
+          provider: nous
+        "kwaipilot/kat-coder-air-v2.5":
+          model: "kwaipilot/kat-coder-air-v2.5"
+          provider: nous
+        "kwaipilot/kat-coder-pro-v2.5":
+          model: "kwaipilot/kat-coder-pro-v2.5"
+          provider: nous
+        "openai/gpt-5.6-luna-pro":
+          model: "openai/gpt-5.6-luna-pro"
+          provider: nous
+        "openai/gpt-5.6-luna":
+          model: "openai/gpt-5.6-luna"
+          provider: nous
+        "openai/gpt-5.6-terra-pro":
+          model: "openai/gpt-5.6-terra-pro"
+          provider: nous
+        "openai/gpt-5.6-terra":
+          model: "openai/gpt-5.6-terra"
+          provider: nous
+        "openai/gpt-5.6-sol-pro":
+          model: "openai/gpt-5.6-sol-pro"
+          provider: nous
+        "x-ai/grok-4.5":
+          model: "x-ai/grok-4.5"
+          provider: nous
+        "~x-ai/grok-latest":
+          model: "~x-ai/grok-latest"
+          provider: nous
+        "aion-labs/aion-3.0-mini":
+          model: "aion-labs/aion-3.0-mini"
+          provider: nous
+        "aion-labs/aion-3.0":
+          model: "aion-labs/aion-3.0"
+          provider: nous
+        "tencent/hy3":
+          model: "tencent/hy3"
+          provider: nous
+        "poolside/laguna-xs-2.1":
+          model: "poolside/laguna-xs-2.1"
+          provider: nous
+        "poolside/laguna-xs-2.1:free":
+          model: "poolside/laguna-xs-2.1:free"
+          provider: nous
+        "nex-agi/nex-n2-mini":
+          model: "nex-agi/nex-n2-mini"
+          provider: nous
+        "sakana/fugu-ultra":
+          model: "sakana/fugu-ultra"
+          provider: nous
+        "google/gemini-3-pro-image":
+          model: "google/gemini-3-pro-image"
+          provider: nous
+        "moonshotai/kimi-k2.7-code":
+          model: "moonshotai/kimi-k2.7-code"
+          provider: nous
+        "~anthropic/claude-fable-latest":
+          model: "~anthropic/claude-fable-latest"
+          provider: nous
+        "nex-agi/nex-n2-pro":
+          model: "nex-agi/nex-n2-pro"
+          provider: nous
+        "nvidia/nemotron-3-ultra-550b-a55b":
+          model: "nvidia/nemotron-3-ultra-550b-a55b"
+          provider: nous
+        "qwen/qwen3.7-plus":
+          model: "qwen/qwen3.7-plus"
+          provider: nous
+        "minimax/minimax-m3":
+          model: "minimax/minimax-m3"
+          provider: nous
+        "stepfun/step-3.7-flash":
+          model: "stepfun/step-3.7-flash"
+          provider: nous
+        "anthropic/claude-opus-4.8-fast":
+          model: "anthropic/claude-opus-4.8-fast"
+          provider: nous
+        "qwen/qwen3.7-max":
+          model: "qwen/qwen3.7-max"
+          provider: nous
+        "x-ai/grok-build-0.1":
+          model: "x-ai/grok-build-0.1"
+          provider: nous
+        "google/gemini-3.5-flash":
+          model: "google/gemini-3.5-flash"
+          provider: nous
+        "anthropic/claude-opus-4.7-fast":
+          model: "anthropic/claude-opus-4.7-fast"
+          provider: nous
+        "inclusionai/ring-2.6-1t":
+          model: "inclusionai/ring-2.6-1t"
+          provider: nous
+        "google/gemini-3.1-flash-lite":
+          model: "google/gemini-3.1-flash-lite"
+          provider: nous
+        "openai/gpt-chat-latest":
+          model: "openai/gpt-chat-latest"
+          provider: nous
+        "x-ai/grok-4.3":
+          model: "x-ai/grok-4.3"
+          provider: nous
+        "ibm-granite/granite-4.1-8b":
+          model: "ibm-granite/granite-4.1-8b"
+          provider: nous
+        "mistralai/mistral-medium-3-5":
+          model: "mistralai/mistral-medium-3-5"
+          provider: nous
+        "~anthropic/claude-haiku-latest":
+          model: "~anthropic/claude-haiku-latest"
+          provider: nous
+        "~openai/gpt-mini-latest":
+          model: "~openai/gpt-mini-latest"
+          provider: nous
+        "~google/gemini-pro-latest":
+          model: "~google/gemini-pro-latest"
+          provider: nous
+        "~moonshotai/kimi-latest":
+          model: "~moonshotai/kimi-latest"
+          provider: nous
+        "~google/gemini-flash-latest":
+          model: "~google/gemini-flash-latest"
+          provider: nous
+        "~anthropic/claude-sonnet-latest":
+          model: "~anthropic/claude-sonnet-latest"
+          provider: nous
+        "~openai/gpt-latest":
+          model: "~openai/gpt-latest"
+          provider: nous
+        "qwen/qwen3.5-plus-20260420":
+          model: "qwen/qwen3.5-plus-20260420"
+          provider: nous
+        "qwen/qwen3.6-flash":
+          model: "qwen/qwen3.6-flash"
+          provider: nous
+        "qwen/qwen3.6-35b-a3b":
+          model: "qwen/qwen3.6-35b-a3b"
+          provider: nous
+        "qwen/qwen3.6-max-preview":
+          model: "qwen/qwen3.6-max-preview"
+          provider: nous
+        "qwen/qwen3.6-27b":
+          model: "qwen/qwen3.6-27b"
+          provider: nous
+        "openai/gpt-5.5-pro":
+          model: "openai/gpt-5.5-pro"
+          provider: nous
+        "openai/gpt-5.5":
+          model: "openai/gpt-5.5"
+          provider: nous
+        "deepseek/deepseek-v4-pro":
+          model: "deepseek/deepseek-v4-pro"
+          provider: nous
+        "deepseek/deepseek-v4-flash":
+          model: "deepseek/deepseek-v4-flash"
+          provider: nous
+        "inclusionai/ling-2.6-1t":
+          model: "inclusionai/ling-2.6-1t"
+          provider: nous
+        "tencent/hy3-preview":
+          model: "tencent/hy3-preview"
+          provider: nous
+        "xiaomi/mimo-v2.5-pro":
+          model: "xiaomi/mimo-v2.5-pro"
+          provider: nous
+        "xiaomi/mimo-v2.5":
+          model: "xiaomi/mimo-v2.5"
+          provider: nous
+        "inclusionai/ling-2.6-flash":
+          model: "inclusionai/ling-2.6-flash"
+          provider: nous
+        "~anthropic/claude-opus-latest":
+          model: "~anthropic/claude-opus-latest"
+          provider: nous
+        "moonshotai/kimi-k2.6":
+          model: "moonshotai/kimi-k2.6"
+          provider: nous
+        "z-ai/glm-5.1":
+          model: "z-ai/glm-5.1"
+          provider: nous
+        "google/gemma-4-26b-a4b-it":
+          model: "google/gemma-4-26b-a4b-it"
+          provider: nous
+        "google/gemma-4-31b-it":
+          model: "google/gemma-4-31b-it"
+          provider: nous
+        "qwen/qwen3.6-plus":
+          model: "qwen/qwen3.6-plus"
+          provider: nous
+        "z-ai/glm-5v-turbo":
+          model: "z-ai/glm-5v-turbo"
+          provider: nous
+        "arcee-ai/trinity-large-thinking":
+          model: "arcee-ai/trinity-large-thinking"
+          provider: nous
+        "x-ai/grok-4.20":
+          model: "x-ai/grok-4.20"
+          provider: nous
+        "kwaipilot/kat-coder-pro-v2":
+          model: "kwaipilot/kat-coder-pro-v2"
+          provider: nous
+        "rekaai/reka-edge":
+          model: "rekaai/reka-edge"
+          provider: nous
+        "minimax/minimax-m2.7":
+          model: "minimax/minimax-m2.7"
+          provider: nous
+        "openai/gpt-5.4-nano":
+          model: "openai/gpt-5.4-nano"
+          provider: nous
+        "openai/gpt-5.4-mini":
+          model: "openai/gpt-5.4-mini"
+          provider: nous
+        "mistralai/mistral-small-2603":
+          model: "mistralai/mistral-small-2603"
+          provider: nous
+        "z-ai/glm-5-turbo":
+          model: "z-ai/glm-5-turbo"
+          provider: nous
+        "nvidia/nemotron-3-super-120b-a12b":
+          model: "nvidia/nemotron-3-super-120b-a12b"
+          provider: nous
+        "bytedance-seed/seed-2.0-lite":
+          model: "bytedance-seed/seed-2.0-lite"
+          provider: nous
+        "qwen/qwen3.5-9b":
+          model: "qwen/qwen3.5-9b"
+          provider: nous
+        "openai/gpt-5.4-pro":
+          model: "openai/gpt-5.4-pro"
+          provider: nous
+        "openai/gpt-5.4":
+          model: "openai/gpt-5.4"
+          provider: nous
+        "inception/mercury-2":
+          model: "inception/mercury-2"
+          provider: nous
+        "google/gemini-3.1-flash-lite-preview":
+          model: "google/gemini-3.1-flash-lite-preview"
+          provider: nous
+        "bytedance-seed/seed-2.0-mini":
+          model: "bytedance-seed/seed-2.0-mini"
+          provider: nous
+        "qwen/qwen3.5-35b-a3b":
+          model: "qwen/qwen3.5-35b-a3b"
+          provider: nous
+        "qwen/qwen3.5-27b":
+          model: "qwen/qwen3.5-27b"
+          provider: nous
+        "qwen/qwen3.5-122b-a10b":
+          model: "qwen/qwen3.5-122b-a10b"
+          provider: nous
+        "qwen/qwen3.5-flash-02-23":
+          model: "qwen/qwen3.5-flash-02-23"
+          provider: nous
+        "google/gemini-3.1-pro-preview-customtools":
+          model: "google/gemini-3.1-pro-preview-customtools"
+          provider: nous
+        "openai/gpt-5.3-codex":
+          model: "openai/gpt-5.3-codex"
+          provider: nous
+        "aion-labs/aion-2.0":
+          model: "aion-labs/aion-2.0"
+          provider: nous
+        "google/gemini-3.1-pro-preview":
+          model: "google/gemini-3.1-pro-preview"
+          provider: nous
+        "qwen/qwen3.5-plus-02-15":
+          model: "qwen/qwen3.5-plus-02-15"
+          provider: nous
+        "qwen/qwen3.5-397b-a17b":
+          model: "qwen/qwen3.5-397b-a17b"
+          provider: nous
+        "minimax/minimax-m2.5":
+          model: "minimax/minimax-m2.5"
+          provider: nous
+        "z-ai/glm-5":
+          model: "z-ai/glm-5"
+          provider: nous
+        "qwen/qwen3-max-thinking":
+          model: "qwen/qwen3-max-thinking"
+          provider: nous
+        "qwen/qwen3-coder-next":
+          model: "qwen/qwen3-coder-next"
+          provider: nous
+        "stepfun/step-3.5-flash":
+          model: "stepfun/step-3.5-flash"
+          provider: nous
+        "moonshotai/kimi-k2.5":
+          model: "moonshotai/kimi-k2.5"
+          provider: nous
+        "upstage/solar-pro-3":
+          model: "upstage/solar-pro-3"
+          provider: nous
+        "openai/gpt-audio":
+          model: "openai/gpt-audio"
+          provider: nous
+        "openai/gpt-audio-mini":
+          model: "openai/gpt-audio-mini"
+          provider: nous
+        "z-ai/glm-4.7-flash":
+          model: "z-ai/glm-4.7-flash"
+          provider: nous
+        "openai/gpt-5.2-codex":
+          model: "openai/gpt-5.2-codex"
+          provider: nous
+        "bytedance-seed/seed-1.6-flash":
+          model: "bytedance-seed/seed-1.6-flash"
+          provider: nous
+        "bytedance-seed/seed-1.6":
+          model: "bytedance-seed/seed-1.6"
+          provider: nous
+        "minimax/minimax-m2.1":
+          model: "minimax/minimax-m2.1"
+          provider: nous
+        "z-ai/glm-4.7":
+          model: "z-ai/glm-4.7"
+          provider: nous
+        "google/gemini-3-flash-preview":
+          model: "google/gemini-3-flash-preview"
+          provider: nous
+        "nvidia/nemotron-3-nano-30b-a3b":
+          model: "nvidia/nemotron-3-nano-30b-a3b"
+          provider: nous
+        "openai/gpt-5.2-chat":
+          model: "openai/gpt-5.2-chat"
+          provider: nous
+        "openai/gpt-5.2-pro":
+          model: "openai/gpt-5.2-pro"
+          provider: nous
+        "openai/gpt-5.2":
+          model: "openai/gpt-5.2"
+          provider: nous
+        "relace/relace-search":
+          model: "relace/relace-search"
+          provider: nous
+        "z-ai/glm-4.6v":
+          model: "z-ai/glm-4.6v"
+          provider: nous
+        "openai/gpt-5.1-codex-max":
+          model: "openai/gpt-5.1-codex-max"
+          provider: nous
+        "amazon/nova-2-lite-v1":
+          model: "amazon/nova-2-lite-v1"
+          provider: nous
+        "mistralai/ministral-14b-2512":
+          model: "mistralai/ministral-14b-2512"
+          provider: nous
+        "mistralai/ministral-8b-2512":
+          model: "mistralai/ministral-8b-2512"
+          provider: nous
+        "mistralai/ministral-3b-2512":
+          model: "mistralai/ministral-3b-2512"
+          provider: nous
+        "mistralai/mistral-large-2512":
+          model: "mistralai/mistral-large-2512"
+          provider: nous
+        "deepseek/deepseek-v3.2":
+          model: "deepseek/deepseek-v3.2"
+          provider: nous
+        "anthropic/claude-opus-4.5":
+          model: "anthropic/claude-opus-4.5"
+          provider: nous
+        "openai/gpt-5.1":
+          model: "openai/gpt-5.1"
+          provider: nous
+        "openai/gpt-5.1-codex":
+          model: "openai/gpt-5.1-codex"
+          provider: nous
+        "openai/gpt-5.1-codex-mini":
+          model: "openai/gpt-5.1-codex-mini"
+          provider: nous
+        "moonshotai/kimi-k2-thinking":
+          model: "moonshotai/kimi-k2-thinking"
+          provider: nous
+        "amazon/nova-premier-v1":
+          model: "amazon/nova-premier-v1"
+          provider: nous
+        "mistralai/voxtral-small-24b-2507":
+          model: "mistralai/voxtral-small-24b-2507"
+          provider: nous
+        "openai/gpt-oss-safeguard-20b":
+          model: "openai/gpt-oss-safeguard-20b"
+          provider: nous
+        "minimax/minimax-m2":
+          model: "minimax/minimax-m2"
+          provider: nous
+        "qwen/qwen3-vl-32b-instruct":
+          model: "qwen/qwen3-vl-32b-instruct"
+          provider: nous
+        "qwen/qwen3-vl-8b-thinking":
+          model: "qwen/qwen3-vl-8b-thinking"
+          provider: nous
+        "qwen/qwen3-vl-8b-instruct":
+          model: "qwen/qwen3-vl-8b-instruct"
+          provider: nous
+        "qwen/qwen3-vl-30b-a3b-thinking":
+          model: "qwen/qwen3-vl-30b-a3b-thinking"
+          provider: nous
+        "qwen/qwen3-vl-30b-a3b-instruct":
+          model: "qwen/qwen3-vl-30b-a3b-instruct"
+          provider: nous
+        "openai/gpt-5-pro":
+          model: "openai/gpt-5-pro"
+          provider: nous
+        "z-ai/glm-4.6":
+          model: "z-ai/glm-4.6"
+          provider: nous
+        "anthropic/claude-sonnet-4.5":
+          model: "anthropic/claude-sonnet-4.5"
+          provider: nous
+        "deepseek/deepseek-v3.2-exp":
+          model: "deepseek/deepseek-v3.2-exp"
+          provider: nous
+        "qwen/qwen3-vl-235b-a22b-thinking":
+          model: "qwen/qwen3-vl-235b-a22b-thinking"
+          provider: nous
+        "qwen/qwen3-vl-235b-a22b-instruct":
+          model: "qwen/qwen3-vl-235b-a22b-instruct"
+          provider: nous
+        "qwen/qwen3-max":
+          model: "qwen/qwen3-max"
+          provider: nous
+        "qwen/qwen3-coder-plus":
+          model: "qwen/qwen3-coder-plus"
+          provider: nous
+        "deepseek/deepseek-v3.1-terminus":
+          model: "deepseek/deepseek-v3.1-terminus"
+          provider: nous
+        "qwen/qwen3-coder-flash":
+          model: "qwen/qwen3-coder-flash"
+          provider: nous
+        "qwen/qwen3-next-80b-a3b-thinking":
+          model: "qwen/qwen3-next-80b-a3b-thinking"
+          provider: nous
+        "qwen/qwen3-next-80b-a3b-instruct":
+          model: "qwen/qwen3-next-80b-a3b-instruct"
+          provider: nous
+        "qwen/qwen-plus-2025-07-28":
+          model: "qwen/qwen-plus-2025-07-28"
+          provider: nous
+        "qwen/qwen-plus-2025-07-28:thinking":
+          model: "qwen/qwen-plus-2025-07-28:thinking"
+          provider: nous
+        "moonshotai/kimi-k2-0905":
+          model: "moonshotai/kimi-k2-0905"
+          provider: nous
+        "qwen/qwen3-30b-a3b-thinking-2507":
+          model: "qwen/qwen3-30b-a3b-thinking-2507"
+          provider: nous
+        "deepseek/deepseek-chat-v3.1":
+          model: "deepseek/deepseek-chat-v3.1"
+          provider: nous
+        "mistralai/mistral-medium-3.1":
+          model: "mistralai/mistral-medium-3.1"
+          provider: nous
+        "z-ai/glm-4.5v":
+          model: "z-ai/glm-4.5v"
+          provider: nous
+        "openai/gpt-5":
+          model: "openai/gpt-5"
+          provider: nous
+        "openai/gpt-5-mini":
+          model: "openai/gpt-5-mini"
+          provider: nous
+        "openai/gpt-5-nano":
+          model: "openai/gpt-5-nano"
+          provider: nous
+        "openai/gpt-oss-120b":
+          model: "openai/gpt-oss-120b"
+          provider: nous
+        "openai/gpt-oss-20b":
+          model: "openai/gpt-oss-20b"
+          provider: nous
+        "anthropic/claude-opus-4.1":
+          model: "anthropic/claude-opus-4.1"
+          provider: nous
+        "mistralai/codestral-2508":
+          model: "mistralai/codestral-2508"
+          provider: nous
+        "qwen/qwen3-coder-30b-a3b-instruct":
+          model: "qwen/qwen3-coder-30b-a3b-instruct"
+          provider: nous
+        "qwen/qwen3-30b-a3b-instruct-2507":
+          model: "qwen/qwen3-30b-a3b-instruct-2507"
+          provider: nous
+        "z-ai/glm-4.5":
+          model: "z-ai/glm-4.5"
+          provider: nous
+        "z-ai/glm-4.5-air":
+          model: "z-ai/glm-4.5-air"
+          provider: nous
+        "qwen/qwen3-235b-a22b-thinking-2507":
+          model: "qwen/qwen3-235b-a22b-thinking-2507"
+          provider: nous
+        "qwen/qwen3-coder":
+          model: "qwen/qwen3-coder"
+          provider: nous
+        "google/gemini-2.5-flash-lite":
+          model: "google/gemini-2.5-flash-lite"
+          provider: nous
+        "qwen/qwen3-235b-a22b-2507":
+          model: "qwen/qwen3-235b-a22b-2507"
+          provider: nous
+        "moonshotai/kimi-k2":
+          model: "moonshotai/kimi-k2"
+          provider: nous
+        "mistralai/mistral-small-3.2-24b-instruct":
+          model: "mistralai/mistral-small-3.2-24b-instruct"
+          provider: nous
+        "minimax/minimax-m1":
+          model: "minimax/minimax-m1"
+          provider: nous
+        "google/gemini-2.5-flash":
+          model: "google/gemini-2.5-flash"
+          provider: nous
+        "google/gemini-2.5-pro":
+          model: "google/gemini-2.5-pro"
+          provider: nous
+        "openai/o3-pro":
+          model: "openai/o3-pro"
+          provider: nous
+        "google/gemini-2.5-pro-preview":
+          model: "google/gemini-2.5-pro-preview"
+          provider: nous
+        "deepseek/deepseek-r1-0528":
+          model: "deepseek/deepseek-r1-0528"
+          provider: nous
+        "anthropic/claude-opus-4":
+          model: "anthropic/claude-opus-4"
+          provider: nous
+        "anthropic/claude-sonnet-4":
+          model: "anthropic/claude-sonnet-4"
+          provider: nous
+        "mistralai/mistral-medium-3":
+          model: "mistralai/mistral-medium-3"
+          provider: nous
+        "google/gemini-2.5-pro-preview-05-06":
+          model: "google/gemini-2.5-pro-preview-05-06"
+          provider: nous
+        "arcee-ai/virtuoso-large":
+          model: "arcee-ai/virtuoso-large"
+          provider: nous
+        "qwen/qwen3-30b-a3b":
+          model: "qwen/qwen3-30b-a3b"
+          provider: nous
+        "qwen/qwen3-8b":
+          model: "qwen/qwen3-8b"
+          provider: nous
+        "qwen/qwen3-14b":
+          model: "qwen/qwen3-14b"
+          provider: nous
+        "qwen/qwen3-32b":
+          model: "qwen/qwen3-32b"
+          provider: nous
+        "qwen/qwen3-235b-a22b":
+          model: "qwen/qwen3-235b-a22b"
+          provider: nous
+        "openai/o4-mini-high":
+          model: "openai/o4-mini-high"
+          provider: nous
+        "openai/o3":
+          model: "openai/o3"
+          provider: nous
+        "openai/o4-mini":
+          model: "openai/o4-mini"
+          provider: nous
+        "openai/gpt-4.1":
+          model: "openai/gpt-4.1"
+          provider: nous
+        "openai/gpt-4.1-mini":
+          model: "openai/gpt-4.1-mini"
+          provider: nous
+        "openai/gpt-4.1-nano":
+          model: "openai/gpt-4.1-nano"
+          provider: nous
+        "meta-llama/llama-4-maverick":
+          model: "meta-llama/llama-4-maverick"
+          provider: nous
+        "meta-llama/llama-4-scout":
+          model: "meta-llama/llama-4-scout"
+          provider: nous
+        "deepseek/deepseek-chat-v3-0324":
+          model: "deepseek/deepseek-chat-v3-0324"
+          provider: nous
+        "google/gemma-3-12b-it":
+          model: "google/gemma-3-12b-it"
+          provider: nous
+        "google/gemma-3-27b-it":
+          model: "google/gemma-3-27b-it"
+          provider: nous
+        "mistralai/mistral-saba":
+          model: "mistralai/mistral-saba"
+          provider: nous
+        "openai/o3-mini-high":
+          model: "openai/o3-mini-high"
+          provider: nous
+        "qwen/qwen-plus":
+          model: "qwen/qwen-plus"
+          provider: nous
+        "openai/o3-mini":
+          model: "openai/o3-mini"
+          provider: nous
+        "deepseek/deepseek-r1":
+          model: "deepseek/deepseek-r1"
+          provider: nous
+        "deepseek/deepseek-chat":
+          model: "deepseek/deepseek-chat"
+          provider: nous
+        "openai/o1":
+          model: "openai/o1"
+          provider: nous
+        "meta-llama/llama-3.3-70b-instruct":
+          model: "meta-llama/llama-3.3-70b-instruct"
+          provider: nous
+        "amazon/nova-lite-v1":
+          model: "amazon/nova-lite-v1"
+          provider: nous
+        "amazon/nova-micro-v1":
+          model: "amazon/nova-micro-v1"
+          provider: nous
+        "amazon/nova-pro-v1":
+          model: "amazon/nova-pro-v1"
+          provider: nous
+        "openai/gpt-4o-2024-11-20":
+          model: "openai/gpt-4o-2024-11-20"
+          provider: nous
+        "mistralai/mistral-large-2407":
+          model: "mistralai/mistral-large-2407"
+          provider: nous
+        "thedrummer/unslopnemo-12b":
+          model: "thedrummer/unslopnemo-12b"
+          provider: nous
+        "qwen/qwen-2.5-7b-instruct":
+          model: "qwen/qwen-2.5-7b-instruct"
+          provider: nous
+        "qwen/qwen-2.5-72b-instruct":
+          model: "qwen/qwen-2.5-72b-instruct"
+          provider: nous
+        "cohere/command-r-08-2024":
+          model: "cohere/command-r-08-2024"
+          provider: nous
+        "cohere/command-r-plus-08-2024":
+          model: "cohere/command-r-plus-08-2024"
+          provider: nous
+        "sao10k/l3.1-euryale-70b":
+          model: "sao10k/l3.1-euryale-70b"
+          provider: nous
+        "openai/gpt-4o-2024-08-06":
+          model: "openai/gpt-4o-2024-08-06"
+          provider: nous
+        "meta-llama/llama-3.1-70b-instruct":
+          model: "meta-llama/llama-3.1-70b-instruct"
+          provider: nous
+        "meta-llama/llama-3.1-8b-instruct":
+          model: "meta-llama/llama-3.1-8b-instruct"
+          provider: nous
+        "mistralai/mistral-nemo":
+          model: "mistralai/mistral-nemo"
+          provider: nous
+        "openai/gpt-4o-mini":
+          model: "openai/gpt-4o-mini"
+          provider: nous
+        "openai/gpt-4o-mini-2024-07-18":
+          model: "openai/gpt-4o-mini-2024-07-18"
+          provider: nous
+        "openai/gpt-4o":
+          model: "openai/gpt-4o"
+          provider: nous
+        "openai/gpt-4o-2024-05-13":
+          model: "openai/gpt-4o-2024-05-13"
+          provider: nous
+        "mistralai/mixtral-8x22b-instruct":
+          model: "mistralai/mixtral-8x22b-instruct"
+          provider: nous
+        "openai/gpt-4-turbo":
+          model: "openai/gpt-4-turbo"
+          provider: nous
+        "anthropic/claude-3-haiku":
+          model: "anthropic/claude-3-haiku"
+          provider: nous
+        "mistralai/mistral-large":
+          model: "mistralai/mistral-large"
+          provider: nous
+        "openai/gpt-3.5-turbo-0613":
+          model: "openai/gpt-3.5-turbo-0613"
+          provider: nous
+        "openai/gpt-4-turbo-preview":
+          model: "openai/gpt-4-turbo-preview"
+          provider: nous
+        "openai/gpt-3.5-turbo-16k":
+          model: "openai/gpt-3.5-turbo-16k"
+          provider: nous
+        "openai/gpt-3.5-turbo":
+          model: "openai/gpt-3.5-turbo"
+          provider: nous
+        "openai/gpt-4":
+          model: "openai/gpt-4"
+          provider: nous
+        "tencent/hy3:free":
+          model: "tencent/hy3:free"
+          provider: nous
+        "stepfun/step-3.7-flash:free":
+          model: "stepfun/step-3.7-flash:free"
+          provider: nous
+        "upstage/solar-pro4:free":
+          model: "upstage/solar-pro4:free"
+          provider: nous
+        "z-ai/glm-5.2:US":
+          model: "z-ai/glm-5.2:US"
+          provider: nous
+        "z-ai/glm-5.2":
+          model: "z-ai/glm-5.2"
+          provider: nous
+        "anthropic/claude-opus-5":
+          model: "anthropic/claude-opus-5"
+          provider: nous
+        "anthropic/claude-sonnet-5":
+          model: "anthropic/claude-sonnet-5"
+          provider: nous
+        "anthropic/claude-fable-5":
+          model: "anthropic/claude-fable-5"
+          provider: nous
+        "anthropic/claude-opus-4.8":
+          model: "anthropic/claude-opus-4.8"
+          provider: nous
+        "anthropic/claude-opus-4.7":
+          model: "anthropic/claude-opus-4.7"
+          provider: nous
+        "anthropic/claude-opus-4.6":
+          model: "anthropic/claude-opus-4.6"
+          provider: nous
+        "anthropic/claude-sonnet-4.6":
+          model: "anthropic/claude-sonnet-4.6"
+          provider: nous
+        "anthropic/claude-haiku-4.5":
+          model: "anthropic/claude-haiku-4.5"
+          provider: nous
+        "openai/gpt-5.6-sol":
+          model: "openai/gpt-5.6-sol"
+          provider: nous
+        "meituan/longcat-2.0:free":
+          model: "meituan/longcat-2.0:free"
+          provider: nous
+        "moonshotai/kimi-k3":
+          model: "moonshotai/kimi-k3"
+          provider: nous
+        "x-ai/grok-4.6":
+          model: "x-ai/grok-4.6"
+          provider: nous
 
 gateway:
   # Unknown senders are denied. No allow-all.

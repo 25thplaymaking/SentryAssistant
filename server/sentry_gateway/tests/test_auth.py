@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 
 import pytest
@@ -15,6 +16,7 @@ from app.auth.work_order_signing import (
     sign_work_order,
     validate_work_order,
 )
+from app.routes.auth import _access_audience_for_device_kind
 from app.workorders.transitions import WorkOrderMode
 
 KEY = "test-signing-key-not-a-real-secret-padded-to-32-bytes-minimum"
@@ -62,6 +64,13 @@ class TestEnrollment:
 
 
 class TestTokens:
+    def test_execution_node_refresh_keeps_node_audience(self):
+        assert (
+            _access_audience_for_device_kind(DeviceKind.EXECUTION_NODE.value)
+            is Audience.NODE
+        )
+        assert _access_audience_for_device_kind(DeviceKind.DESKTOP.value) is Audience.CLIENT
+
     def test_access_token_round_trips(self):
         svc = TokenService(KEY)
         token = svc.issue_access_token(
@@ -114,6 +123,20 @@ class TestWorkOrderValidation:
         )
         assert claims["wid"] == "wo-1"
         assert order.nonce in seen
+
+    def test_native_runtime_options_are_integrity_protected_in_the_signed_order(self):
+        options = {
+            "action": "review",
+            "collaboration_mode": "plan",
+            "sandbox": "readOnly",
+            "effort": "high",
+        }
+        order = make_order(runtime_options=options)
+        claims = validate_work_order(
+            token=order.token, signing_key=KEY, expectation=NODE, seen_nonces=set()
+        )
+
+        assert json.loads(claims["ropts"]) == options
 
     def test_replayed_order_is_refused(self):
         order = make_order()
@@ -186,4 +209,3 @@ class TestWorkOrderValidation:
                 expectation=NODE,
                 seen_nonces=set(),
             )
-

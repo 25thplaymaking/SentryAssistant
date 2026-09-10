@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
+using Sentry.Node.Gateway;
 
 namespace Sentry.Node.Security;
 
@@ -27,7 +28,11 @@ public sealed record ValidatedWorkOrder(
     string Harness,
     string Mode,
     string CorrelationId,
-    string Nonce);
+    string Nonce,
+    string? RuntimeSessionId,
+    string? RuntimeModel,
+    NativeRuntimeOptions? RuntimeOptions,
+    string? InputImagesDigest);
 
 /// <summary>
 /// Validates a Gateway-signed work order before anything executes.
@@ -44,9 +49,14 @@ public sealed class WorkOrderValidator
     public const string WorkOrderAudience = "sentry.workorder";
 
     private readonly SymmetricSecurityKey _key;
-    private readonly NodeExpectation _expectation;
+    private NodeExpectation _expectation;
     private readonly HashSet<string> _seenNonces = new(StringComparer.Ordinal);
     private readonly object _nonceLock = new();
+
+    public void UpdateExpectation(NodeExpectation expectation)
+    {
+        _expectation = expectation;
+    }
 
     // MapInboundClaims must stay false. By default this handler rewrites standard
     // JWT claim names onto legacy schemas.xmlsoap.org URIs, so "sub" would arrive
@@ -162,6 +172,23 @@ public sealed class WorkOrderValidator
                 "Requesting user is not a current member of this team.");
         }
 
+        NativeRuntimeOptions? runtimeOptions = null;
+        var runtimeOptionsClaim = principal.FindFirst("ropts")?.Value;
+        if (!string.IsNullOrWhiteSpace(runtimeOptionsClaim))
+        {
+            try
+            {
+                runtimeOptions = System.Text.Json.JsonSerializer.Deserialize<NativeRuntimeOptions>(
+                    runtimeOptionsClaim,
+                    new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                throw new WorkOrderRejectedException("Native runtime options are malformed.");
+            }
+            ValidateNativeOptions(runtimeOptions, mode, harness);
+        }
+
         return new ValidatedWorkOrder(
             WorkOrderId: Claim("wid"),
             RequestingUserId: requestingUser,
@@ -171,6 +198,58 @@ public sealed class WorkOrderValidator
             Harness: harness,
             Mode: mode,
             CorrelationId: Claim("cid"),
-            Nonce: nonce);
+            Nonce: nonce,
+            RuntimeSessionId: principal.FindFirst("rsid")?.Value,
+            RuntimeModel: principal.FindFirst("rmodel")?.Value,
+            RuntimeOptions: runtimeOptions,
+            InputImagesDigest: principal.FindFirst("imgsha")?.Value);
+    }
+
+    private static void ValidateNativeOptions(
+        NativeRuntimeOptions? options, string mode, string harness)
+    {
+        if (options is null) throw new WorkOrderRejectedException("Native runtime options are missing.");
+        if (string.Equals(harness, "integrations", StringComparison.OrdinalIgnoreCase))
+        {
+            if (mode != "readOnly" || options.Sandbox != "readOnly")
+                throw new WorkOrderRejectedException("Integration actions are read-only work orders.");
+            if (options.Action is not (
+                "sessionsSync" or "sessionRead" or "sessionWatch"
+                or "workspaceInspect" or "openIde"))
+                throw new WorkOrderRejectedException("Integration action is not allowed.");
+            if (options.Provider is not null && options.Provider is not ("codex" or "claude" or "all"))
+                throw new WorkOrderRejectedException("Integration provider is not allowed.");
+            if (options.ProviderSessionId is { Length: > 160 })
+                throw new WorkOrderRejectedException("Provider session identifier is too long.");
+            if (options.Ide is not null && options.Ide is not ("vscode" or "cursor"))
+                throw new WorkOrderRejectedException("IDE is not allowed.");
+            if (options.WatchSeconds is < 0 or > 20)
+                throw new WorkOrderRejectedException("Live watch duration is not allowed.");
+            if ((options.Action is "sessionRead" or "sessionWatch")
+                && (options.Provider is not ("codex" or "claude")
+                    || string.IsNullOrWhiteSpace(options.ProviderSessionId)))
+                throw new WorkOrderRejectedException(
+                    "A supported provider and exact session identifier are required.");
+            if (options.Action == "openIde" && options.Ide is not ("vscode" or "cursor"))
+                throw new WorkOrderRejectedException("An available IDE must be selected.");
+            return;
+        }
+        if (options.Action is not ("turn" or "review"))
+            throw new WorkOrderRejectedException("Native runtime action is not allowed.");
+        if (options.CollaborationMode is not ("default" or "plan"))
+            throw new WorkOrderRejectedException("Native collaboration mode is not allowed.");
+        if (options.Effort is not null && options.Effort is not
+            ("minimal" or "low" or "medium" or "high" or "xhigh" or "max" or "ultra"))
+            throw new WorkOrderRejectedException("Native reasoning effort is not allowed.");
+        if (options.Personality is not ("none" or "friendly" or "pragmatic"))
+            throw new WorkOrderRejectedException("Native personality is not allowed.");
+        if (options.ApprovalPolicy is not ("on-request" or "untrusted"))
+            throw new WorkOrderRejectedException("Native approval policy is not allowed.");
+        if (options.Sandbox is not ("readOnly" or "workspaceWrite"))
+            throw new WorkOrderRejectedException("Native sandbox is not allowed.");
+        if (!string.Equals(options.Sandbox, mode, StringComparison.Ordinal))
+            throw new WorkOrderRejectedException("Native sandbox does not match the signed work-order mode.");
+        if (options.ReviewTarget != "uncommittedChanges")
+            throw new WorkOrderRejectedException("Native review target is not allowed.");
     }
 }

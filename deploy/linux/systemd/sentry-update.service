@@ -1,0 +1,29 @@
+[Unit]
+Description=Pull Sentry updates, then bring the stack up
+Documentation=file:///srv/sentry/repo/deploy/linux/sentry-update.sh
+# Docker must be able to answer before we build or start anything.
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=bishop
+# The compose services carry `restart: unless-stopped`, so Docker has already
+# restored the stack by the time this runs. That is deliberate: the assistant
+# comes back on the last-known-good images WITHOUT waiting on the network, and
+# this unit then rolls it forward if an update is available. Availability never
+# depends on a successful fetch.
+ExecStart=/srv/sentry/repo/deploy/linux/sentry-update.sh
+# A build can be slow on a cold layer cache; do not kill it half-way.
+TimeoutStartSec=3600
+# The script exits 0 on every update failure by design, so a non-zero status
+# here means the script itself broke. Do not retry-loop a broken script into a
+# rebuild storm.
+Restart=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

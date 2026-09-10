@@ -6,11 +6,14 @@ is read from a read-only Docker secret mount and never returned to the model.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
+from uuid import UUID
 
 from aiohttp import web
 
@@ -21,13 +24,18 @@ BASE_URL = os.environ.get(
 TOKEN_FILE = os.environ.get(
     "SERVER_CONTROL_TOKEN_FILE", "/run/secrets/server-control-token"
 )
+GATEWAY_URL = os.environ.get(
+    "SENTRY_GATEWAY_URL", "http://gateway:8090"
+).rstrip("/")
+GATEWAY_KEY = os.environ.get("SENTRY_HERMES_API_KEY", "")
 
 
-def api(path: str, *, payload: dict | None = None) -> dict:
-    token = open(TOKEN_FILE, encoding="utf-8").read().strip()
+def request_json(
+    url: str, *, token: str, payload: dict | None = None, timeout: int = 15
+) -> dict:
     data = None if payload is None else json.dumps(payload).encode()
     request = urllib.request.Request(
-        f"{BASE_URL}{path}",
+        url,
         data=data,
         method="GET" if payload is None else "POST",
         headers={
@@ -37,7 +45,7 @@ def api(path: str, *, payload: dict | None = None) -> dict:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
         try:
@@ -45,7 +53,56 @@ def api(path: str, *, payload: dict | None = None) -> dict:
             detail = problem.get("detail") or problem.get("title")
         except Exception:
             detail = None
-        raise RuntimeError(detail or f"Server Control returned HTTP {error.code}") from None
+        raise RuntimeError(detail or f"The requested Sentry action returned HTTP {error.code}") from None
+
+
+def server_api(path: str, *, payload: dict | None = None) -> dict:
+    token = open(TOKEN_FILE, encoding="utf-8").read().strip()
+    return request_json(f"{BASE_URL}{path}", token=token, payload=payload)
+
+
+def gateway_api(path: str, *, payload: dict | None = None) -> dict:
+    if not GATEWAY_KEY:
+        raise RuntimeError("Sentry's workstation connection is not configured.")
+    if not path.startswith("/api/runtime/workstation/"):
+        raise RuntimeError("Refused a non-workstation Gateway path.")
+    return request_json(f"{GATEWAY_URL}{path}", token=GATEWAY_KEY, payload=payload)
+
+
+def workstation_result(work_order_id: str) -> dict:
+    try:
+        normalized = str(UUID(work_order_id))
+    except (ValueError, TypeError, AttributeError):
+        raise RuntimeError("Work order ID must be a valid UUID.") from None
+    return gateway_api(f"/api/runtime/workstation/work/{normalized}")
+
+
+def dispatch_workstation(arguments: dict) -> dict:
+    payload = {
+        "title": arguments["title"],
+        "instruction": arguments["instruction"],
+        "workspace_id": arguments["workspace_id"],
+        "harness": arguments.get("harness", "claude"),
+        "mode": arguments.get("mode", "readOnly"),
+    }
+    dispatched = gateway_api("/api/runtime/workstation/work", payload=payload)
+
+    # Fast inspection commands normally finish in a few seconds. Waiting here
+    # lets Sentry return the verified result in the same chat turn without
+    # inventing another job system. Longer work remains queryable by its ID.
+    wait_seconds = max(0, min(int(arguments.get("wait_seconds", 20)), 30))
+    work_order_id = dispatched.get("work_order_id")
+    if not work_order_id or wait_seconds == 0:
+        return dispatched
+
+    deadline = time.monotonic() + wait_seconds
+    latest = dispatched
+    while time.monotonic() < deadline:
+        time.sleep(1.5)
+        latest = workstation_result(work_order_id)
+        if latest.get("terminal"):
+            return latest
+    return latest
 
 
 TOOLS = [
@@ -75,6 +132,51 @@ TOOLS = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "workstation_status",
+        "description": (
+            "List Bryce's connected personal workstation and its exact named workspace, harness, and mode capabilities. "
+            "Local filesystem paths are never returned. Always call this before workstation_run."
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "workstation_run",
+        "description": (
+            "Send one bounded work order to Bryce's connected workstation. Use an exact workspace and capability from "
+            "workstation_status. Default to readOnly. Use workspaceWrite only when Bryce explicitly asks to change files. "
+            "The shell harness accepts only its local command allowlist; Claude is separately tool-restricted. No raw path, "
+            "inbound connection, elevated action, deletion, credential access, git push/reset/clean, or arbitrary server shell is exposed."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "minLength": 1, "maxLength": 200},
+                "instruction": {"type": "string", "minLength": 1, "maxLength": 20000},
+                "workspace_id": {"type": "string", "minLength": 1, "maxLength": 200},
+                "harness": {"type": "string", "enum": ["shell", "claude"], "default": "claude"},
+                "mode": {"type": "string", "enum": ["readOnly", "workspaceWrite"], "default": "readOnly"},
+                "wait_seconds": {"type": "integer", "minimum": 0, "maximum": 30, "default": 20},
+            },
+            "required": ["title", "instruction", "workspace_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "workstation_result",
+        "description": (
+            "Read the durable state and result of a workstation work order. Use this after workstation_run returns a "
+            "non-terminal state, and do not claim the action completed until this returns a terminal result."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "work_order_id": {"type": "string", "format": "uuid"},
+            },
+            "required": ["work_order_id"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -93,7 +195,7 @@ def handle(message: dict) -> dict | None:
             {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "sentry-server-control", "version": "1.0.0"},
+                "serverInfo": {"name": "sentry-server-control", "version": "1.1.0"},
             },
         )
     if method == "tools/list":
@@ -103,12 +205,18 @@ def handle(message: dict) -> dict | None:
         arguments = params.get("arguments") or {}
         try:
             if params.get("name") == "server_status":
-                value = api("/status")
+                value = server_api("/status")
             elif params.get("name") == "server_action":
-                value = api(
+                value = server_api(
                     f"/services/{arguments['service_id']}/actions/{arguments['action']}",
                     payload={"confirmationName": arguments["expected_name"]},
                 )
+            elif params.get("name") == "workstation_status":
+                value = gateway_api("/api/runtime/workstation/status")
+            elif params.get("name") == "workstation_run":
+                value = dispatch_workstation(arguments)
+            elif params.get("name") == "workstation_result":
+                value = workstation_result(arguments["work_order_id"])
             else:
                 raise RuntimeError("Unknown Server Control tool.")
             return result(request_id, {"content": [{"type": "text", "text": json.dumps(value)}]})
@@ -135,15 +243,35 @@ async def http_mcp(request: web.Request) -> web.Response:
         raise web.HTTPRequestEntityTooLarge(max_size=65536, actual_size=request.content_length)
     try:
         message = await request.json()
-        response = handle(message)
+        # Tool calls perform bounded blocking HTTP requests and may wait briefly
+        # for a workstation result. Keep them off aiohttp's event loop so the
+        # health endpoint and other tool requests remain responsive.
+        response = await asyncio.to_thread(handle, message)
     except Exception as error:
         response = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": str(error)[:500]}}
     return web.json_response(response or {}, status=202 if response is None else 200)
 
 
+async def http_status(_: web.Request) -> web.Response:
+    """Internal read-only service inventory for the authenticated Gateway.
+
+    This listener is exposed only on the private Compose network. The Server
+    Control bearer remains inside this container and is never returned.
+    """
+    try:
+        value = await asyncio.to_thread(server_api, "/status")
+        return web.json_response(value)
+    except Exception as error:
+        return web.json_response(
+            {"available": False, "services": [], "error": str(error)[:200]},
+            status=503,
+        )
+
+
 def run_http() -> None:
     app = web.Application(client_max_size=65536)
     app.router.add_post("/mcp", http_mcp)
+    app.router.add_get("/status", http_status)
     app.router.add_get("/health", lambda _: web.json_response({"status": "healthy"}))
     web.run_app(app, host="0.0.0.0", port=int(os.environ.get("SERVER_CONTROL_MCP_PORT", "8765")))
 

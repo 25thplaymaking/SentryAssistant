@@ -1,9 +1,9 @@
 # Sentry private control plane.
 #
 # Nothing here publishes to a public interface. PostgreSQL and the Gateway bind
-# loopback only; Hermes is not published at all and is reachable solely on the
-# internal compose network. Public exposure is the ingress layer's job, and it
-# terminates at the Gateway, never at the runtime.
+# loopback only; the Hermes agent API is reachable solely on the internal
+# compose network. The raw Nous subscription proxy is loopback-only for Tardia.
+# Public exposure terminates at the Gateway, never at either runtime endpoint.
 #
 # Secrets come from deploy/linux/.env, which is not in Git.
 
@@ -41,9 +41,20 @@ services:
         HERMES_UID: ${HERMES_UID:-1000}
         HERMES_GID: ${HERMES_GID:-1000}
     restart: unless-stopped
+    init: true
     depends_on:
       server-control-mcp:
         condition: service_healthy
+    healthcheck:
+      # Any HTTP answer (401 included) proves the agent API is up; -f would
+      # fail on the auth challenge and report a live agent as dead. The 8645
+      # proxy is deliberately not probed: it is a convenience sidecar and
+      # start-hermes.sh already reaps the pair if either process dies.
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://127.0.0.1:8642/v1/models"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     environment:
       HERMES_HOME: /home/hermes/.hermes
       API_SERVER_ENABLED: "true"
@@ -51,19 +62,19 @@ services:
       API_SERVER_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
       API_SERVER_HOST: 0.0.0.0
       API_SERVER_PORT: "8642"
-      # Inference provider credentials. Without this passthrough the keys sit in
-      # .env and never reach the process, and every turn fails with
-      # "No inference provider configured" — the .env entry alone is not enough.
-      #
-      # All are optional so a provider switch is a config change, not a compose
-      # edit. Which one is ACTIVE is decided by `model.provider` in
-      # hermes/config.yaml, which outranks env autodetection in Hermes'
-      # resolve_provider() chain. Do not rely on autodetection: a bare
-      # OPENAI_API_KEY with no pinned provider resolves to "openrouter",
-      # not native OpenAI.
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      # Nous is authenticated through Hermes's per-profile OAuth store. Optional
+      # alternate providers remain explicit; no environment-key autodetection
+      # can override `model.provider: nous`.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # A Claude SUBSCRIPTION (Pro/Max), as opposed to metered API billing.
+      # `claude setup-token` on a machine already signed in mints a long-lived
+      # token intended for exactly this; the anthropic provider accepts it
+      # directly (its env_vars list it alongside ANTHROPIC_API_KEY).
+      #
+      # Passed here so the token lives in .env rather than being pasted into a
+      # config file that gets copied, diffed and backed up. Empty by default,
+      # so leaving it unset changes nothing.
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes:
       # One writable runtime data directory per profile. Never shared.
@@ -77,9 +88,13 @@ services:
       # ./data/hermes/personal unshared. Bound into the webui at the same path so
       # the session metadata is true in both environments.
       - ./data/workspace:/workspace
-    # Deliberately no `ports:` block. Only the Gateway may reach the runtime.
+    ports:
+      # Raw Nous subscription inference for host-local clients such as Tardia.
+      # The proxy accepts any bearer, so it must never bind beyond loopback.
+      - "127.0.0.1:8645:8645"
     expose:
       - "8642"
+      - "8645"
     security_opt:
       - no-new-privileges:true
     networks: [sentry, server-control-tools]
@@ -97,6 +112,8 @@ services:
     environment:
       SERVER_CONTROL_API_URL: http://host.docker.internal:7444/server-control/api/automation
       SERVER_CONTROL_TOKEN_FILE: /run/secrets/server-control-token
+      SENTRY_GATEWAY_URL: http://gateway:8090
+      SENTRY_HERMES_API_KEY: ${HERMES_API_KEY:?HERMES_API_KEY is required}
     volumes:
       - /opt/server-control/data/hermes-automation.token:/run/secrets/server-control-token:ro
     expose:
@@ -116,6 +133,125 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks: [server-control-tools]
+
+  llama:
+    # Local CPU inference for Hermes. Started under the `local-model` profile, so
+    # `docker compose up -d` does NOT bring it up by accident: this service takes
+    # ~24GB of RAM and saturates the machine's memory bandwidth. Start it
+    # deliberately, and stop the heavy game servers first:
+    #
+    #   docker compose --profile local-model up -d llama
+    #
+    # Nothing depends on it. Hermes only talks to it once model.provider in
+    # hermes/config.yaml is switched to `custom` (see docs/local-inference.md),
+    # so this can run, be benchmarked, and be torn down without touching chat.
+    profiles: ["local-model"]
+    build:
+      context: ./llama
+    # restart: "no" is deliberate and load-bearing. A Docker restart policy is a
+    # property of the CONTAINER, not of the compose profile -- with
+    # `unless-stopped` this service silently comes back on every host reboot and
+    # takes 24GB plus the machine's whole memory bandwidth, which is exactly the
+    # "starts by accident" failure the profile gate exists to prevent.
+    # Starting it is always an explicit act:
+    #   docker compose --profile local-model up -d llama
+    restart: "no"
+    # --- Every number below is MEASURED on this host, not guessed -----------
+    # Generation is DRAM-bandwidth-bound. Achievable read bandwidth peaks at
+    # ~54.5 GB/s at 12 threads and DEGRADES past 16, so --threads is 12.
+    #
+    # Deliberately NO `cpuset`. Pinning was measured and is a straight loss:
+    #   cpuset 0-11   21.7 tok/s
+    #   cpuset 0-15   23.7 tok/s
+    #   unpinned      25-27 tok/s
+    # Pinning also does NOT protect the other services from this one. The
+    # resource they actually contend for is memory bandwidth, which is shared by
+    # the memory controller no matter which cores anything runs on. So a cpuset
+    # costs throughput and buys nothing. If you need the box back, STOP this
+    # service -- do not try to box it in.
+    command:
+      - --model
+      - /models/Qwen3.6-35B-A3B-MTP-UD-Q4_K_M.gguf
+      # NOTE: ik_llama has no --alias. The model id this server advertises on
+      # /v1/models is derived from the file, and `model.default` in
+      # hermes/config.yaml must match whatever /v1/models actually reports --
+      # check it, do not assume. (Mainline llama.cpp does support --alias, so
+      # this line differs between the two engines.)
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8080"
+      # 64K is Hermes' hard floor — it refuses a smaller context at startup.
+      # RAM would allow far more; PREFILL WALL-CLOCK is the real constraint.
+      - --ctx-size
+      - "65536"
+      - --threads
+      - "12"
+      # NO --threads-batch. llama-bench says prefill scales to 24 threads, and
+      # that is true for a bare prefill sweep -- but it is WRONG here, measured:
+      #   ctx65536 f16 t12        30.92 tok/s
+      #   ctx65536 f16 t12 tb24   24.46 tok/s   (-21%)
+      # MTP speculative decoding runs a batched verify on EVERY decode step, so a
+      # batch thread count above --threads oversubscribes and costs more than the
+      # prefill win it was meant to buy. Leave it equal to --threads.
+
+      # Required for tool calling. Without it the model's tool calls come back
+      # as prose in `content` and Hermes never executes anything.
+      - --jinja
+      # Run-time tensor repack: the single largest prefill win on this CPU
+      # (139.9 -> 382.7 t/s).
+      - -rtr
+      # The multi-token-prediction head ships INSIDE this GGUF. Without this
+      # flag the server loads it and logs "unused tensor blk.40.nextn.* --
+      # ignoring" -- you pay the RAM either way. Worth +49% here.
+      - --spec-type
+      - mtp
+      # Hermes' tool schemas are a MEASURED 11,565-token floor on every request
+      # (see the note in hermes/config.yaml). Uncached that is ~30s of prefill
+      # per turn, so prompt caching is load-bearing, not tuning.
+      #
+      # ik_llama does NOT have mainline's --cache-reuse. It has something better
+      # for this workload: a similarity-matched RAM prompt cache, on by default.
+      # -cram is its size in MiB; -crs is the similarity above which a cached
+      # prompt is reused (default 0.50). Set explicitly so the budget is visible
+      # in the RAM accounting rather than an invisible default.
+      - -cram
+      - "8192"
+      # KV cache stays f16. Quantising it was MEASURED as a straight loss here:
+      #   ctx65536 f16 KV    30.92 tok/s
+      #   ctx65536 q8_0 KV   25.57 tok/s   (-17%)
+      # The usual reason to quantise KV is memory, and there is no memory
+      # pressure to relieve: this model puts a growing KV cache on only ~10 of
+      # its 40 layers (3:1 Gated-DeltaNet:attention), so 64K of f16 KV is a few
+      # hundred MB against 65GB free. Paying 17% of throughput to save that
+      # would be a bad trade, and q4_0 additionally degrades tool-call accuracy.
+      # Hermes preserves reasoning traces between turns when the server emits them.
+      - --chat-template-kwargs
+      - '{"preserve_thinking":true}'
+      # Keep 21GB resident. Re-reading it from NVMe mid-session is dead time.
+      - --mlock
+    volumes:
+      # Weights are read-only and live outside the repo — 21GB does not belong
+      # in Git, and the container has no reason to write here.
+      - /srv/sentry/models:/models:ro
+    # Deliberately no `ports:`. Same rule as the Hermes runtime: only other
+    # containers on the `sentry` network may reach it.
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      # -rtr repacks ~21GB at startup before the socket answers. A short
+      # start_period would mark a healthy server as failed and restart-loop it.
+      start_period: 300s
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      # --mlock needs to lock 21GB; the default 64KB limit makes it fail.
+      memlock: -1
+    networks: [sentry]
 
   gateway:
     build:
@@ -140,6 +276,13 @@ services:
       SENTRY_HERMES_PINNED_VERSION: ${HERMES_VERSION:-0.19.0}
       SENTRY_HERMES_BOOTSTRAP_PROFILE_ID: ${SENTRY_BOOTSTRAP_PROFILE_ID:-}
       SENTRY_HERMES_BOOTSTRAP_PROFILE_NAME: ${SENTRY_BOOTSTRAP_PROFILE_NAME:-sentry-personal}
+      # The Windows installer pins this to the profile it actually enrolled.
+      # Do not infer it from the historical runtime bootstrap UUID.
+      SENTRY_WORKSTATION_PROFILE_ID: ${SENTRY_WORKSTATION_PROFILE_ID:-}
+      # Zone the cron scheduler evaluates job schedules in. The containers run
+      # UTC while the operator does not; an unset value silently shifts every
+      # job by the offset, so the live .env pins it.
+      SENTRY_CRON_TIMEZONE: ${SENTRY_CRON_TIMEZONE:-UTC}
       # Fernet key that decrypts persisted per-profile Hermes bearer keys in the
       # runtime_endpoints table. Held only here (from .env), never in the DB.
       # Absent -> the gateway registers only the bootstrap profile (current
@@ -156,7 +299,7 @@ services:
       - "127.0.0.1:8090:8090"
     security_opt:
       - no-new-privileges:true
-    networks: [sentry]
+    networks: [sentry, server-control-tools]
 
   webui:
     # The Frontir fork of hermes-webui. Built from a checkout of the fork's

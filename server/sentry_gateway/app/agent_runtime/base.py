@@ -45,6 +45,18 @@ class ContextVisibility(StrEnum):
     WORKSPACE = "workspace"
 
 
+class RuntimeExperience(StrEnum):
+    """The product lane a turn runs in.
+
+    Work preserves the profile's configured Hermes capability surface. Chat is
+    a conversational lane whose smaller toolset is enforced by the runtime
+    adapter rather than trusted to a client-side toggle.
+    """
+
+    CHAT = "chat"
+    WORK = "work"
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeCapabilities:
     """What a runtime can actually do, discovered rather than assumed."""
@@ -82,6 +94,13 @@ class RuntimeSession:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeImage:
+    """One validated inline image carried across the runtime boundary."""
+
+    data_url: str
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeTurn:
     session_id: str
     profile_id: UUID
@@ -90,6 +109,35 @@ class RuntimeTurn:
     #: Untrusted connector/document content is passed as quoted data. It must never
     #: be able to select tools, workspaces, or approval modes.
     quoted_context: tuple[str, ...] = ()
+    #: Which advertised model answers this turn. None keeps the profile's own
+    #: configured default, which is the behaviour every caller had before model
+    #: selection existed. A non-None value has ALREADY been validated against
+    #: available_models() by the route -- the runtime does not re-check, and an
+    #: unvalidated value must never reach here (it would silently answer from
+    #: the default while the UI claimed otherwise).
+    model: str | None = None
+    #: Legacy callers default to Work so adding the field cannot silently take
+    #: tools away from existing integrations. New Sentry sessions choose Chat
+    #: explicitly when that is the user's selected lane.
+    experience: RuntimeExperience = RuntimeExperience.WORK
+    #: Named workstation workspace.  This is never a raw local path; the Node
+    #: resolves it against its own allowlisted registry.
+    workspace_id: str | None = None
+    #: Small, validated controls for a native runtime (for example Codex plan
+    #: mode or a review action). They are persisted and signed by the Gateway;
+    #: arbitrary client data must never be placed here.
+    native_options: dict[str, Any] = field(default_factory=dict)
+    #: Optional owner-selected Hermes target. The chat route resolves this
+    #: against current linked workspaces or Server Control's allowlist before it
+    #: reaches a runtime; arbitrary paths and service names never pass through.
+    target_context: dict[str, Any] = field(default_factory=dict)
+    #: Images are validated and bounded by the authenticated chat route before
+    #: an adapter sees them. Adapters translate this neutral data URL into the
+    #: selected runtime's native input shape.
+    images: tuple[RuntimeImage, ...] = ()
+    #: User-maintained profile memory. Runtime adapters decide how to inject it
+    #: without allowing it to override security or tool policy.
+    profile_memory: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +198,11 @@ class AgentRuntime(Protocol):
     async def create_session(
         self, profile_id: UUID, scope: SessionScope
     ) -> RuntimeSession: ...
+
+    #: Model aliases this profile's runtime can actually route to. This is the
+    #: integration registry: anything absent here cannot be selected, so an
+    #: empty result means "no options", never "fall back to a default list".
+    async def available_models(self, profile_id: UUID) -> tuple[str, ...]: ...
 
     def send_turn(self, request: RuntimeTurn) -> AsyncIterator[RuntimeEvent]: ...
 

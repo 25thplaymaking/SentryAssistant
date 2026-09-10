@@ -114,10 +114,6 @@ fi
 step "Starting ${CONTAINER}"
 API_KEY="$(docker exec sentry-gateway-1 python -c 'import secrets;print(secrets.token_hex(24))')"
 [ -n "$API_KEY" ] || die "could not generate an API key"
-# `set -e` + a failed grep in a command substitution aborts the script with no
-# message at all, so check explicitly and say what is wrong.
-OPENAI_KEY="$(grep '^OPENAI_API_KEY=' .env | cut -d= -f2- || true)"
-[ -n "$OPENAI_KEY" ] || die "no OPENAI_API_KEY in .env — the agent would start but every turn would fail"
 HERMES_UID="$(id -u)"
 HERMES_GID="$(id -g)"
 
@@ -145,11 +141,12 @@ docker run -d \
     -e API_SERVER_HOST=0.0.0.0 \
     -e API_SERVER_PORT=8642 \
     -e HERMES_HOME=/home/hermes/.hermes \
-    -e OPENAI_API_KEY="$OPENAI_KEY" \
     -v "${DATA_DIR}:/home/hermes/.hermes" \
     -v "${WORK_DIR}:/workspace" \
     sentry-hermes >/dev/null || die "docker run failed"
 ok "started with mem=${MEMORY_LIMIT} cpus=${CPU_LIMIT} pids=${PIDS_LIMIT}, caps dropped"
+echo "NOTICE: Nous OAuth is profile-specific. Authenticate this teammate with:"
+echo "  docker exec -it ${CONTAINER} hermes auth add nous --type oauth"
 
 # 3. Wait for the API server ---------------------------------------------------
 step "Waiting for the agent's API server"

@@ -11,16 +11,29 @@ using Sentry.Node.Workspaces;
 // outbound to the Gateway. Nothing listens here.
 //
 // Configuration comes from appsettings.node.json next to the executable, or a
-// path given as the first argument. Secrets come from the environment:
-//   SENTRY_NODE_TOKEN    node-audience access token from device enrolment
-//   SENTRY_SIGNING_KEY   shared key used to validate signed work orders
+// path given as the first argument. Secrets are DPAPI-protected for this
+// Windows user and never appear in the scheduled-task command line.
 
 // Hook management and hook delivery run without a gateway token or a signing
 // key: installing hooks is a local file edit, and receiving one must work on a
 // machine that has never enrolled.
 if (args.Length > 0 && args[0] is "install-hooks" or "uninstall-hooks" or "hook")
 {
+    if (OperatingSystem.IsWindows()) NativeMethods.AttachConsole(-1);
     return HookCommands.Run(args, Console.Out, Console.In);
+}
+
+if (args.Length > 0 && args[0] is "workspace")
+{
+    if (OperatingSystem.IsWindows()) NativeMethods.AttachConsole(-1);
+    var defaultCfg = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "SentryAssistant", "node", "state", "appsettings.node.json");
+    if (!File.Exists(defaultCfg))
+    {
+        defaultCfg = Path.Combine(AppContext.BaseDirectory, "appsettings.node.json");
+    }
+    return WorkspaceCommands.Run(args, defaultCfg, Console.Out, Console.Error);
 }
 
 var configPath = args.Length > 0
@@ -30,17 +43,6 @@ var configPath = args.Length > 0
 if (!File.Exists(configPath))
 {
     Console.Error.WriteLine($"No configuration at {configPath}");
-    return 2;
-}
-
-var token = Environment.GetEnvironmentVariable("SENTRY_NODE_TOKEN");
-var signingKey = Environment.GetEnvironmentVariable("SENTRY_SIGNING_KEY");
-
-if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(signingKey))
-{
-    Console.Error.WriteLine(
-        "SENTRY_NODE_TOKEN and SENTRY_SIGNING_KEY must both be set. " +
-        "Enrol this machine as an executionNode device to obtain a token.");
     return 2;
 }
 
@@ -58,12 +60,49 @@ catch (Exception exception)
     return 2;
 }
 
+var configDirectory = Path.GetDirectoryName(Path.GetFullPath(configPath))
+    ?? AppContext.BaseDirectory;
+var logPath = ResolvePath(config.LogPath, configDirectory, "node.log");
+Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+if (File.Exists(logPath) && new FileInfo(logPath).Length > 5_000_000)
+    File.Move(logPath, logPath + ".previous", overwrite: true);
+using var logWriter = TextWriter.Synchronized(new StreamWriter(
+    new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.Read))
+{
+    AutoFlush = true
+});
+Console.SetOut(logWriter);
+Console.SetError(logWriter);
+
+var credentialPath = ResolvePath(
+    config.CredentialPath, configDirectory, "node.credentials.json");
+var credentialFile = new Sentry.Node.Gateway.NodeCredentialFile(credentialPath);
+Sentry.Node.Gateway.NodeCredentialSecrets secrets;
+try
+{
+    secrets = credentialFile.Load();
+}
+catch (Exception exception)
+{
+    Console.Error.WriteLine($"Could not load protected node credentials: {exception.Message}");
+    return 2;
+}
+
+var credentialSession = new Sentry.Node.Gateway.NodeCredentialSession(
+    secrets.AccessToken,
+    secrets.RefreshToken,
+    (access, refresh, cancellationToken) => credentialFile.SaveAsync(
+        new Sentry.Node.Gateway.NodeCredentialSecrets(access, refresh, secrets.SigningKey),
+        cancellationToken));
+
 // Workspace roots are declared here, locally. The Gateway only ever sends the
 // identifier, so this file is the single place a path is bound.
 var registrations = config.Workspaces.Select(w => new WorkspaceRegistration(
     w.WorkspaceId,
     w.RootPath,
-    new HashSet<string>(w.AllowedHarnesses, StringComparer.OrdinalIgnoreCase),
+    new HashSet<string>(
+        w.AllowedHarnesses.Append("integrations"),
+        StringComparer.OrdinalIgnoreCase),
     new HashSet<string>(w.AllowedModes, StringComparer.Ordinal))).ToList();
 
 WorkspaceRegistry registry;
@@ -84,6 +123,25 @@ var harnesses = new Dictionary<string, IHarnessAdapter>(StringComparer.OrdinalIg
         config.ClaudeExecutable,
         Path.Combine(AppContext.BaseDirectory, "claude-automation-settings.json"))
 };
+var nativeRuntimes = new Dictionary<string, Sentry.Node.Gateway.NativeRuntimeRegistration>(
+    StringComparer.OrdinalIgnoreCase);
+var integrations = new IntegrationAdapter();
+harnesses["integrations"] = integrations;
+nativeRuntimes["integrations"] = integrations.Registration();
+if (!string.IsNullOrWhiteSpace(config.CodexExecutable)
+    && File.Exists(config.CodexExecutable))
+{
+    var codexStatePath = ResolvePath(
+        config.CodexSessionPath, configDirectory, "codex-sessions.json");
+    var codex = new CodexAppServerAdapter(config.CodexExecutable, codexStatePath);
+    var probe = await CodexAppServerAdapter.ProbeAsync(
+        config.CodexExecutable, registrations, CancellationToken.None);
+    nativeRuntimes["codex"] = probe;
+    if (probe.Available)
+        harnesses["codex"] = codex;
+    else
+        Console.WriteLine($"native Codex unavailable: {probe.Reason}");
+}
 
 var expectation = new NodeExpectation(
     NodeId: config.NodeId,
@@ -102,13 +160,55 @@ Console.CancelKeyPress += (_, e) =>
 
 var worker = new NodeWorker(new NodeWorkerOptions(
     GatewayUrl: config.GatewayUrl,
-    AccessToken: token,
-    SigningKey: signingKey,
+    Credentials: credentialSession,
+    SigningKey: secrets.SigningKey,
     NodeName: config.NodeName,
     Expectation: expectation,
     Workspaces: registry,
     Harnesses: harnesses,
+    NativeRuntimes: nativeRuntimes,
     PollInterval: TimeSpan.FromSeconds(config.PollIntervalSeconds)));
+
+using var configWatcher = new FileSystemWatcher(
+    Path.GetDirectoryName(Path.GetFullPath(configPath))!,
+    Path.GetFileName(configPath))
+{
+    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+    EnableRaisingEvents = true
+};
+
+DateTime lastReload = DateTime.MinValue;
+configWatcher.Changed += (_, _) =>
+{
+    if (DateTime.UtcNow - lastReload < TimeSpan.FromSeconds(1)) return;
+    lastReload = DateTime.UtcNow;
+
+    try
+    {
+        Thread.Sleep(200);
+        var updatedText = File.ReadAllText(configPath);
+        var updatedConfig = JsonSerializer.Deserialize<NodeConfig>(
+            updatedText,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        if (updatedConfig?.Workspaces != null)
+        {
+            var updatedRegistrations = updatedConfig.Workspaces.Select(w => new WorkspaceRegistration(
+                w.WorkspaceId,
+                w.RootPath,
+                new HashSet<string>(
+                    w.AllowedHarnesses.Append("integrations"),
+                    StringComparer.OrdinalIgnoreCase),
+                new HashSet<string>(w.AllowedModes, StringComparer.Ordinal))).ToList();
+
+            worker.UpdateWorkspaces(updatedRegistrations);
+            Console.WriteLine($"[watcher] Reloaded {updatedRegistrations.Count} workspace(s) from {configPath}");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[watcher] Could not reload {configPath}: {ex.Message}");
+    }
+};
 
 Console.WriteLine($"Sentry node '{config.NodeName}' -> {config.GatewayUrl}");
 Console.WriteLine($"workspaces: {string.Join(", ", registrations.Select(r => r.WorkspaceId))}");
@@ -116,6 +216,12 @@ Console.WriteLine($"harnesses:  {string.Join(", ", harnesses.Keys)}");
 
 await worker.RunAsync(shutdown.Token);
 return 0;
+
+static string ResolvePath(string? configured, string baseDirectory, string fallbackName)
+{
+    var value = string.IsNullOrWhiteSpace(configured) ? fallbackName : configured;
+    return Path.GetFullPath(value, baseDirectory);
+}
 
 internal sealed record WorkspaceConfig(
     string WorkspaceId,
@@ -130,5 +236,15 @@ internal sealed record NodeConfig(
     string OwnerUserId,
     WorkspaceConfig[] Workspaces,
     string[] TeamMembers,
+    string? CredentialPath = null,
+    string? LogPath = null,
     string ClaudeExecutable = "claude",
+    string? CodexExecutable = null,
+    string? CodexSessionPath = null,
     int PollIntervalSeconds = 5);
+
+internal static class NativeMethods
+{
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    public static extern bool AttachConsole(int dwProcessId);
+}

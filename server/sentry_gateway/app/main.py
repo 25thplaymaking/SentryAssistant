@@ -21,20 +21,25 @@ from .agent_runtime.endpoints import (
     register_persisted_endpoints,
 )
 from .agent_runtime.hermes import HermesInstance, HermesRuntime
+from .agent_runtime.routed import RoutedRuntime
 from .auth.tokens import TokenService
 from .config import Settings, get_settings
+from .cron.scheduler import CronScheduler, resolve_zone
 from .routes import admin as admin_routes
+from .routes import agent_admin as agent_admin_routes
 from .routes import agent_messages as agent_messages_routes
 from .routes import auth as auth_routes
 from .routes import chat as chat_routes
 from .routes import cron as cron_routes
 from .routes import kanban as kanban_routes
+from .routes import integrations as integrations_routes
 from .routes import memory as memory_routes
 from .routes import nodes as nodes_routes
 from .routes import profiles as profiles_routes
 from .routes import skills as skills_routes
 from .routes import teams as teams_routes
 from .routes import workorders as workorders_routes
+from .routes import workstation as workstation_routes
 
 
 def build_runtime(settings: Settings) -> AgentRuntime:
@@ -52,7 +57,7 @@ def build_runtime(settings: Settings) -> AgentRuntime:
                     profile_name=settings.hermes_bootstrap_profile_name,
                 )
             )
-        return runtime
+        return RoutedRuntime(runtime)
     raise ValueError(f"Unknown runtime {settings.runtime_name!r}")
 
 
@@ -74,6 +79,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         # Startup must not crash-loop on a database blip; readiness reports it.
         app.state.pool = None
+
+    bind_pool = getattr(app.state.runtime, "bind_pool", None)
+    if bind_pool is not None:
+        bind_pool(app.state.pool)
 
     # Revocation is persisted, so rehydrate it. Without this a gateway restart
     # would silently un-revoke every device whose token had not yet expired.
@@ -123,9 +132,17 @@ async def lifespan(app: FastAPI):
             # the affected profiles simply fail closed when a turn is attempted.
             pass
 
+    # The scheduler that fires profile_cron_jobs. It reads pool/runtime from
+    # app.state on every tick, so starting it before either is healthy is safe:
+    # a tick without a pool fires nothing (fail closed, same as chat).
+    scheduler = CronScheduler(app, zone=resolve_zone(settings.cron_timezone))
+    app.state.cron_scheduler = scheduler
+    scheduler.start()
+
     try:
         yield
     finally:
+        await scheduler.stop()
         if app.state.pool is not None:
             await app.state.pool.close()
         aclose = getattr(app.state.runtime, "aclose", None)
@@ -144,10 +161,12 @@ app = FastAPI(
 
 
 app.include_router(admin_routes.router)
+app.include_router(agent_admin_routes.router)
 app.include_router(auth_routes.router)
 app.include_router(chat_routes.router)
 app.include_router(profiles_routes.router)
 app.include_router(kanban_routes.router)
+app.include_router(integrations_routes.router)
 app.include_router(skills_routes.router)
 app.include_router(memory_routes.router)
 app.include_router(agent_messages_routes.router)
@@ -155,6 +174,7 @@ app.include_router(cron_routes.router)
 app.include_router(nodes_routes.router)
 app.include_router(teams_routes.router)
 app.include_router(workorders_routes.router)
+app.include_router(workstation_routes.router)
 
 
 @app.get("/health/live")
@@ -223,5 +243,3 @@ async def runtime_info() -> dict[str, Any]:
         "healthy": capabilities.is_healthy,
         "degradedReason": capabilities.degraded_reason,
     }
-
-

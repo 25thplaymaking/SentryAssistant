@@ -10,6 +10,9 @@ grant of trust on its own — the node re-validates everything before executing.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
 from typing import Any
 from uuid import UUID
 
@@ -33,6 +36,7 @@ class WorkspaceRegistration(BaseModel):
 class NodeRegistration(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     workspaces: list[WorkspaceRegistration] = Field(default_factory=list)
+    native_runtimes: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class NodeView(BaseModel):
@@ -49,6 +53,10 @@ class DispatchedWorkOrder(BaseModel):
     harness: str
     mode: WorkOrderMode
     correlation_id: str
+    runtime_session_id: str | None = None
+    runtime_model: str | None = None
+    runtime_options: dict[str, Any] = Field(default_factory=dict)
+    input_images: list[dict[str, str]] = Field(default_factory=list)
 
 
 class RunResult(BaseModel):
@@ -59,6 +67,13 @@ class RunResult(BaseModel):
     evidence: dict[str, Any] = Field(default_factory=dict)
 
 
+class RunEvent(BaseModel):
+    event_index: int = Field(gt=0)
+    event_type: str = Field(min_length=1, max_length=100)
+    summary: str = Field(default="", max_length=8000)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 def _pool(request: Request):
     pool = getattr(request.app.state, "pool", None)
     if pool is None:
@@ -67,6 +82,42 @@ def _pool(request: Request):
             detail="Database is unavailable.",
         )
     return pool
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
+
+
+def _json_list(value: Any) -> list[dict[str, str]]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return []
+    if not isinstance(value, list):
+        return []
+    return [
+        item for item in value
+        if isinstance(item, dict) and isinstance(item.get("data_url"), str)
+    ]
+
+
+def _input_images_digest(images: list[dict[str, str]]) -> str | None:
+    if not images:
+        return None
+    digest = hashlib.sha256()
+    for image in images:
+        digest.update(image["data_url"].encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 @router.post("/register", response_model=NodeView)
@@ -89,22 +140,25 @@ async def register_node(
             # return the node's existing identity instead of minting a new one.
             node_id = await conn.fetchval(
                 """
-                INSERT INTO execution_nodes (owner_user_id, device_id, name, last_seen_at)
-                VALUES ($1, $2, $3, now())
+                INSERT INTO execution_nodes
+                    (owner_user_id, device_id, name, last_seen_at, native_runtimes)
+                VALUES ($1, $2, $3, now(), $4)
                 ON CONFLICT (device_id) DO UPDATE
-                    SET name = EXCLUDED.name, last_seen_at = now()
+                    SET name = EXCLUDED.name, last_seen_at = now(),
+                        native_runtimes = EXCLUDED.native_runtimes
                 RETURNING id
                 """,
                 caller.user_id,
                 caller.device_id,
                 body.name,
+                json.dumps(body.native_runtimes),
             )
 
             for workspace in body.workspaces:
                 # Elevated mode is never registrable; it requires per-run owner
                 # approval, so it cannot be granted by a node's own registration.
                 modes = [m for m in workspace.allowed_modes if m in ("readOnly", "workspaceWrite")]
-                await conn.execute(
+                node_workspace_id = await conn.fetchval(
                     """
                     INSERT INTO node_workspaces
                         (node_id, workspace_id, allowed_harnesses, allowed_modes)
@@ -112,12 +166,72 @@ async def register_node(
                     ON CONFLICT (node_id, workspace_id) DO UPDATE
                         SET allowed_harnesses = EXCLUDED.allowed_harnesses,
                             allowed_modes = EXCLUDED.allowed_modes
+                    RETURNING id
                     """,
                     node_id,
                     workspace.workspace_id,
                     workspace.allowed_harnesses,
                     modes,
                 )
+
+                # A node token is owner-bound and the local registry is the
+                # authority for which named roots/modes this machine exposes.
+                # Keep personal grants in sync with that declaration. Team
+                # sharing remains a separate owner-controlled decision.
+                await conn.execute(
+                    """
+                    UPDATE workspace_policy_grants
+                    SET revoked_at = now()
+                    WHERE node_workspace_id = $1
+                      AND team_id IS NULL
+                      AND NOT (mode = ANY($2::text[]))
+                      AND revoked_at IS NULL
+                    """,
+                    node_workspace_id,
+                    modes,
+                )
+                for mode in modes:
+                    grant_id = await conn.fetchval(
+                        """
+                        SELECT id FROM workspace_policy_grants
+                        WHERE node_workspace_id = $1 AND team_id IS NULL AND mode = $2
+                        ORDER BY granted_at DESC LIMIT 1
+                        """,
+                        node_workspace_id,
+                        mode,
+                    )
+                    if grant_id is None:
+                        await conn.execute(
+                            """
+                            INSERT INTO workspace_policy_grants
+                                (node_workspace_id, team_id, mode, granted_by)
+                            VALUES ($1, NULL, $2, $3)
+                            """,
+                            node_workspace_id,
+                            mode,
+                            caller.user_id,
+                        )
+                    else:
+                        await conn.execute(
+                            """
+                            UPDATE workspace_policy_grants
+                            SET revoked_at = NULL, granted_by = $2, granted_at = now()
+                            WHERE id = $1
+                            """,
+                            grant_id,
+                            caller.user_id,
+                        )
+
+            workspace_ids = [workspace.workspace_id for workspace in body.workspaces]
+            await conn.execute(
+                """
+                DELETE FROM node_workspaces
+                WHERE node_id = $1
+                  AND NOT (workspace_id = ANY($2::text[]))
+                """,
+                node_id,
+                workspace_ids,
+            )
 
             await audit.record_with(
                 conn,
@@ -175,7 +289,9 @@ async def claim_work(
             rows = await conn.fetch(
                 """
                 SELECT w.id, w.prompt, w.workspace_id, w.harness, w.mode,
-                       w.correlation_id, w.requested_by, w.team_id, w.profile_id
+                       w.correlation_id, w.requested_by, w.team_id, w.profile_id,
+                       w.runtime_session_id, w.runtime_model, w.runtime_options,
+                       w.input_images
                 FROM work_orders w
                 WHERE w.execution_node_id = $1
                   AND w.state = 'assigned'
@@ -188,6 +304,7 @@ async def claim_work(
             )
 
             for row in rows:
+                input_images = _json_list(row["input_images"])
                 signed = sign_work_order(
                     signing_key=signing_key,
                     work_order_id=str(row["id"]),
@@ -199,6 +316,10 @@ async def claim_work(
                     harness=row["harness"],
                     mode=WorkOrderMode(row["mode"]),
                     correlation_id=row["correlation_id"],
+                    runtime_session_id=row["runtime_session_id"],
+                    runtime_model=row["runtime_model"],
+                    runtime_options=_json_object(row["runtime_options"]),
+                    input_images_digest=_input_images_digest(input_images),
                 )
 
                 # Record the nonce so a replayed dispatch is refused even if the
@@ -212,7 +333,7 @@ async def claim_work(
                     row["id"],
                 )
                 await conn.execute(
-                    "UPDATE work_orders SET state = 'inProgress', updated_at = now() WHERE id = $1",
+                    "UPDATE work_orders SET state = 'inProgress', input_images = '[]'::jsonb, updated_at = now() WHERE id = $1",
                     row["id"],
                 )
                 await conn.execute(
@@ -250,10 +371,101 @@ async def claim_work(
                         harness=row["harness"],
                         mode=WorkOrderMode(row["mode"]),
                         correlation_id=row["correlation_id"],
+                        runtime_session_id=row["runtime_session_id"],
+                        runtime_model=row["runtime_model"],
+                        runtime_options=_json_object(row["runtime_options"]),
+                        input_images=input_images,
                     )
                 )
 
     return dispatched
+
+
+@router.post("/work/{work_order_id}/events", status_code=status.HTTP_202_ACCEPTED)
+async def submit_event(
+    work_order_id: UUID,
+    body: RunEvent,
+    request: Request,
+    caller: Caller = Depends(require_node),
+) -> dict[str, Any]:
+    """Append one ordered native-runtime event from this node's live run."""
+    pool = _pool(request)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT w.state, n.device_id
+            FROM work_orders w
+            JOIN execution_nodes n ON n.id = w.execution_node_id
+            WHERE w.id = $1
+            """,
+            work_order_id,
+        )
+        if row is None or row["device_id"] != caller.device_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+        if row["state"] != "inProgress":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This work order is no longer accepting events.",
+            )
+        inserted = await conn.fetchval(
+            """
+            INSERT INTO work_order_events
+                (work_order_id, event_index, event_type, summary, payload)
+            VALUES ($1,$2,$3,$4,$5)
+            ON CONFLICT (work_order_id, event_index) DO NOTHING
+            RETURNING event_index
+            """,
+            work_order_id,
+            body.event_index,
+            body.event_type,
+            body.summary,
+            json.dumps(body.payload),
+        )
+    return {"accepted": inserted is not None, "event_index": body.event_index}
+
+
+@router.get("/work/{work_order_id}/response")
+async def wait_for_response(
+    work_order_id: UUID,
+    request_id: str,
+    request: Request,
+    wait_seconds: int = 0,
+    caller: Caller = Depends(require_node),
+) -> dict[str, Any]:
+    """Poll one exact user response; the workstation remains outbound-only."""
+    if not request_id or len(request_id) > 300:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request id.")
+    pool = _pool(request)
+    wait_seconds = max(0, min(int(wait_seconds), 20))
+    deadline = asyncio.get_running_loop().time() + wait_seconds
+    while True:
+        async with pool.acquire() as conn:
+            owner = await conn.fetchrow(
+                """
+                SELECT w.state, n.device_id
+                FROM work_orders w
+                JOIN execution_nodes n ON n.id = w.execution_node_id
+                WHERE w.id = $1
+                """,
+                work_order_id,
+            )
+            if owner is None or owner["device_id"] != caller.device_id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+            response = await conn.fetchrow(
+                """
+                SELECT response FROM work_order_responses
+                WHERE work_order_id = $1 AND request_id = $2
+                """,
+                work_order_id,
+                request_id,
+            )
+        if response is not None:
+            return {"ready": True, "response": _json_object(response["response"])}
+        if owner["state"] != "inProgress":
+            return {"ready": False, "terminal": True}
+        if asyncio.get_running_loop().time() >= deadline:
+            return {"ready": False, "terminal": False}
+        await asyncio.sleep(0.5)
 
 
 @router.post("/work/{work_order_id}/result", status_code=status.HTTP_202_ACCEPTED)
@@ -286,11 +498,16 @@ async def submit_result(
                     status_code=status.HTTP_404_NOT_FOUND, detail="Not found."
                 )
 
+            # A browser-side Stop may have already made the durable order
+            # cancelled while the workstation was unwinding its App Server
+            # process.  The late node result must not resurrect that order as
+            # failed or ready-for-review.
+            outcome = "cancelled" if row["state"] == "cancelled" else body.outcome
             target = (
                 WorkOrderState.READY_FOR_REVIEW
-                if body.outcome == "succeeded"
+                if outcome == "succeeded"
                 else WorkOrderState.FAILED
-                if body.outcome == "failed"
+                if outcome == "failed"
                 else WorkOrderState.CANCELLED
             )
 
@@ -306,28 +523,29 @@ async def submit_result(
                 """,
                 work_order_id,
                 attempt,
-                body.outcome,
+                outcome,
                 body.status_boundary,
                 body.summary[:4000],
             )
             await conn.execute(
-                "UPDATE work_orders SET state = $2, updated_at = now() WHERE id = $1",
+                "UPDATE work_orders SET state = $2, input_images = '[]'::jsonb, updated_at = now() WHERE id = $1",
                 work_order_id,
                 target.value,
             )
-            await conn.execute(
-                """
-                INSERT INTO work_order_transitions
-                    (work_order_id, from_state, to_state, actor_user_id, reason, correlation_id)
-                VALUES ($1,$2,$3,$4,$5,$6)
-                """,
-                work_order_id,
-                row["state"],
-                target.value,
-                caller.user_id,
-                f"node reported {body.outcome}",
-                row["correlation_id"],
-            )
+            if row["state"] != target.value:
+                await conn.execute(
+                    """
+                    INSERT INTO work_order_transitions
+                        (work_order_id, from_state, to_state, actor_user_id, reason, correlation_id)
+                    VALUES ($1,$2,$3,$4,$5,$6)
+                    """,
+                    work_order_id,
+                    row["state"],
+                    target.value,
+                    caller.user_id,
+                    f"node reported {outcome}",
+                    row["correlation_id"],
+                )
             await audit.record_with(
                 conn,
                 AuditEvent(
@@ -341,7 +559,7 @@ async def submit_result(
                     target_kind="workorder",
                     target_id=str(work_order_id),
                     evidence=body.evidence,
-                    detail=f"{body.outcome} ({body.status_boundary})",
+                    detail=f"{outcome} ({body.status_boundary})",
                 ),
             )
 

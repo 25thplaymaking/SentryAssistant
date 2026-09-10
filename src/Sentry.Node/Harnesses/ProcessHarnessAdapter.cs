@@ -4,7 +4,10 @@ using Sentry.Node.Workspaces;
 
 namespace Sentry.Node.Harnesses;
 
-public sealed record HarnessProgress(string Type, string Summary);
+public sealed record HarnessProgress(
+    string Type,
+    string Summary,
+    System.Text.Json.JsonElement? Payload = null);
 
 public sealed record HarnessResult(
     string Outcome,
@@ -21,6 +24,28 @@ public interface IHarnessAdapter
         string mode,
         WorkspaceRegistration workspace,
         IProgress<HarnessProgress> events,
+        CancellationToken cancellationToken);
+}
+
+public interface IInteractiveHarnessBridge
+{
+    Task ReportAsync(HarnessProgress progress, CancellationToken cancellationToken);
+
+    Task<System.Text.Json.JsonElement?> WaitForResponseAsync(
+        string requestId, CancellationToken cancellationToken);
+}
+
+public interface IInteractiveHarnessAdapter : IHarnessAdapter
+{
+    Task<HarnessResult> ExecuteInteractiveAsync(
+        string prompt,
+        string mode,
+        WorkspaceRegistration workspace,
+        string runtimeSessionId,
+        string model,
+        Sentry.Node.Gateway.NativeRuntimeOptions options,
+        IReadOnlyList<Sentry.Node.Gateway.RuntimeImageInput> inputImages,
+        IInteractiveHarnessBridge bridge,
         CancellationToken cancellationToken);
 }
 

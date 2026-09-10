@@ -33,14 +33,32 @@ public sealed class WorkspaceRegistry
     public WorkspaceRegistry(IEnumerable<WorkspaceRegistration> registrations)
     {
         _registrations = new Dictionary<string, WorkspaceRegistration>(StringComparer.Ordinal);
-        foreach (var registration in registrations)
+        ReplaceRegistrations(registrations);
+    }
+
+    public void ReplaceRegistrations(IEnumerable<WorkspaceRegistration> registrations)
+    {
+        lock (_registrations)
         {
-            var root = NormalizeRoot(registration.RootPath);
-            _registrations[registration.WorkspaceId] = registration with { RootPath = root };
+            _registrations.Clear();
+            foreach (var registration in registrations)
+            {
+                var root = NormalizeRoot(registration.RootPath);
+                _registrations[registration.WorkspaceId] = registration with { RootPath = root };
+            }
         }
     }
 
-    public IReadOnlyCollection<string> RegisteredIds => _registrations.Keys;
+    public IReadOnlyCollection<string> RegisteredIds
+    {
+        get
+        {
+            lock (_registrations)
+            {
+                return _registrations.Keys.ToList();
+            }
+        }
+    }
 
     /// <summary>
     /// Resolves a workspace ID to its registered root. Anything not registered is
@@ -53,7 +71,16 @@ public sealed class WorkspaceRegistry
             throw new WorkspaceResolutionException("Workspace identifier was empty.");
         }
 
-        if (!_registrations.TryGetValue(workspaceId, out var registration))
+        WorkspaceRegistration? registration;
+        lock (_registrations)
+        {
+            if (!_registrations.TryGetValue(workspaceId, out registration))
+            {
+                registration = null;
+            }
+        }
+
+        if (registration is null)
         {
             // Deliberately does not echo the requested value, and does not fall
             // back to treating it as a path.
