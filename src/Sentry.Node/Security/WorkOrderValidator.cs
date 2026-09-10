@@ -49,9 +49,14 @@ public sealed class WorkOrderValidator
     public const string WorkOrderAudience = "sentry.workorder";
 
     private readonly SymmetricSecurityKey _key;
-    private readonly NodeExpectation _expectation;
+    private NodeExpectation _expectation;
     private readonly HashSet<string> _seenNonces = new(StringComparer.Ordinal);
     private readonly object _nonceLock = new();
+
+    public void UpdateExpectation(NodeExpectation expectation)
+    {
+        _expectation = expectation;
+    }
 
     // MapInboundClaims must stay false. By default this handler rewrites standard
     // JWT claim names onto legacy schemas.xmlsoap.org URIs, so "sub" would arrive

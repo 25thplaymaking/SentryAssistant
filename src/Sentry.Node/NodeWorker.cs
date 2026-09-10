@@ -38,6 +38,21 @@ public sealed class NodeWorker
         _log = log ?? Console.WriteLine;
     }
 
+    private volatile bool _reRegistrationRequested;
+
+    public void RequestReRegistration()
+    {
+        _reRegistrationRequested = true;
+    }
+
+    public void UpdateWorkspaces(IEnumerable<WorkspaceRegistration> registrations)
+    {
+        _options.Workspaces.ReplaceRegistrations(registrations);
+        var registeredIds = _options.Workspaces.RegisteredIds.ToHashSet(StringComparer.Ordinal);
+        _validator.UpdateExpectation(_options.Expectation with { RegisteredWorkspaces = registeredIds });
+        _reRegistrationRequested = true;
+    }
+
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         using var connection = new NodeConnection(_options.GatewayUrl, _options.Credentials);
@@ -49,6 +64,13 @@ public sealed class NodeWorker
         {
             try
             {
+                if (_reRegistrationRequested)
+                {
+                    _reRegistrationRequested = false;
+                    _log("workspaces updated; re-registering with Gateway...");
+                    await RegisterAsync(connection, backoff, cancellationToken);
+                }
+
                 var work = await connection.ClaimWorkAsync(cancellationToken);
                 backoff.Reset();
 

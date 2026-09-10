@@ -19,7 +19,21 @@ using Sentry.Node.Workspaces;
 // machine that has never enrolled.
 if (args.Length > 0 && args[0] is "install-hooks" or "uninstall-hooks" or "hook")
 {
+    if (OperatingSystem.IsWindows()) NativeMethods.AttachConsole(-1);
     return HookCommands.Run(args, Console.Out, Console.In);
+}
+
+if (args.Length > 0 && args[0] is "workspace")
+{
+    if (OperatingSystem.IsWindows()) NativeMethods.AttachConsole(-1);
+    var defaultCfg = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "SentryAssistant", "node", "state", "appsettings.node.json");
+    if (!File.Exists(defaultCfg))
+    {
+        defaultCfg = Path.Combine(AppContext.BaseDirectory, "appsettings.node.json");
+    }
+    return WorkspaceCommands.Run(args, defaultCfg, Console.Out, Console.Error);
 }
 
 var configPath = args.Length > 0
@@ -155,6 +169,47 @@ var worker = new NodeWorker(new NodeWorkerOptions(
     NativeRuntimes: nativeRuntimes,
     PollInterval: TimeSpan.FromSeconds(config.PollIntervalSeconds)));
 
+using var configWatcher = new FileSystemWatcher(
+    Path.GetDirectoryName(Path.GetFullPath(configPath))!,
+    Path.GetFileName(configPath))
+{
+    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+    EnableRaisingEvents = true
+};
+
+DateTime lastReload = DateTime.MinValue;
+configWatcher.Changed += (_, _) =>
+{
+    if (DateTime.UtcNow - lastReload < TimeSpan.FromSeconds(1)) return;
+    lastReload = DateTime.UtcNow;
+
+    try
+    {
+        Thread.Sleep(200);
+        var updatedText = File.ReadAllText(configPath);
+        var updatedConfig = JsonSerializer.Deserialize<NodeConfig>(
+            updatedText,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        if (updatedConfig?.Workspaces != null)
+        {
+            var updatedRegistrations = updatedConfig.Workspaces.Select(w => new WorkspaceRegistration(
+                w.WorkspaceId,
+                w.RootPath,
+                new HashSet<string>(
+                    w.AllowedHarnesses.Append("integrations"),
+                    StringComparer.OrdinalIgnoreCase),
+                new HashSet<string>(w.AllowedModes, StringComparer.Ordinal))).ToList();
+
+            worker.UpdateWorkspaces(updatedRegistrations);
+            Console.WriteLine($"[watcher] Reloaded {updatedRegistrations.Count} workspace(s) from {configPath}");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[watcher] Could not reload {configPath}: {ex.Message}");
+    }
+};
+
 Console.WriteLine($"Sentry node '{config.NodeName}' -> {config.GatewayUrl}");
 Console.WriteLine($"workspaces: {string.Join(", ", registrations.Select(r => r.WorkspaceId))}");
 Console.WriteLine($"harnesses:  {string.Join(", ", harnesses.Keys)}");
@@ -187,3 +242,9 @@ internal sealed record NodeConfig(
     string? CodexExecutable = null,
     string? CodexSessionPath = null,
     int PollIntervalSeconds = 5);
+
+internal static class NativeMethods
+{
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    public static extern bool AttachConsole(int dwProcessId);
+}
