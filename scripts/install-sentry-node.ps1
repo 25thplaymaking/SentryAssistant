@@ -94,7 +94,10 @@ if (-not $installRoot.StartsWith($allowedPrefix, [StringComparison]::OrdinalIgno
 
 $serverWork = [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE "Documents\ServerWork"))
 $enfusion = [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE "Documents\Enfusion"))
-foreach ($workspace in @($serverWork, $enfusion)) {
+$sentryWebUi = if (Test-Path -LiteralPath "P:\sentry-webui" -PathType Container) { "P:\sentry-webui" } else { [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE "Documents\sentry-webui")) }
+$sentryAssistant = if (Test-Path -LiteralPath "P:\SentryAssistant" -PathType Container) { "P:\SentryAssistant" } else { [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE "Documents\SentryAssistant")) }
+$blender = if (Test-Path -LiteralPath "C:\Users\Bryce\Documents\Blender" -PathType Container) { "C:\Users\Bryce\Documents\Blender" } else { [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE "Documents\Blender")) }
+foreach ($workspace in @($serverWork, $enfusion, $sentryWebUi, $sentryAssistant, $blender)) {
     if (-not (Test-Path -LiteralPath $workspace -PathType Container)) {
         throw "A configured Sentry workspace does not exist: $workspace"
     }
@@ -172,6 +175,21 @@ $workspaceRegistration = @(
         workspace_id = "enfusion"
         allowed_harnesses = @("shell", "claude", "codex")
         allowed_modes = @("readOnly", "workspaceWrite")
+    },
+    @{
+        workspace_id = "sentry-webui"
+        allowed_harnesses = @("shell", "claude", "codex")
+        allowed_modes = @("readOnly", "workspaceWrite")
+    },
+    @{
+        workspace_id = "sentry-assistant"
+        allowed_harnesses = @("shell", "claude", "codex")
+        allowed_modes = @("readOnly", "workspaceWrite")
+    },
+    @{
+        workspace_id = "blender"
+        allowed_harnesses = @("shell", "claude", "codex")
+        allowed_modes = @("readOnly", "workspaceWrite")
     }
 )
 $registration = Invoke-RestMethod -Method Post -Uri "$GatewayUrl/api/nodes/register" `
@@ -237,6 +255,24 @@ $config = [ordered]@{
             rootPath = $enfusion
             allowedHarnesses = @("shell", "claude", "codex")
             allowedModes = @("readOnly", "workspaceWrite")
+        },
+        [ordered]@{
+            workspaceId = "sentry-webui"
+            rootPath = $sentryWebUi
+            allowedHarnesses = @("shell", "claude", "codex")
+            allowedModes = @("readOnly", "workspaceWrite")
+        },
+        [ordered]@{
+            workspaceId = "sentry-assistant"
+            rootPath = $sentryAssistant
+            allowedHarnesses = @("shell", "claude", "codex")
+            allowedModes = @("readOnly", "workspaceWrite")
+        },
+        [ordered]@{
+            workspaceId = "blender"
+            rootPath = $blender
+            allowedHarnesses = @("shell", "claude", "codex")
+            allowedModes = @("readOnly", "workspaceWrite")
         }
     )
     teamMembers = @()
@@ -279,7 +315,7 @@ if ($task.State -notin @('Running', 'Ready')) {
 [pscustomobject]@{
     Installed = $true
     Node = $NodeName
-    Workspaces = @('server-work', 'enfusion')
+    Workspaces = @('server-work', 'enfusion', 'sentry-webui', 'sentry-assistant', 'blender')
     TaskState = [string]$task.State
     Release = $revision
 }

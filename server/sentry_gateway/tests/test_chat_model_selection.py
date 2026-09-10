@@ -146,6 +146,8 @@ class FakePool:
             async def __aenter__(self):
                 class Conn:
                     async def execute(self, sql, *args): return None
+                    async def fetch(self, sql, *args): return []
+                    async def fetchrow(self, sql, *args): return None
                 return Conn()
             async def __aexit__(self, *_): return False
         return Ctx()

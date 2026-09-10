@@ -179,6 +179,7 @@ async def _profile_memory(request: Request, profile_id: UUID) -> tuple[tuple[str
 
 
 _EXPERIENCES = {
+    "default": RuntimeExperience.CHAT.value,
     "items": [
         {
             "id": RuntimeExperience.CHAT.value,

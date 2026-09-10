@@ -14,7 +14,8 @@ public sealed class CommandAllowlist
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "git status", "git log", "git diff", "git show", "git branch",
-            "git rev-parse", "git ls-files"
+            "git rev-parse", "git ls-files", "git describe", "git cat-file",
+            "git fetch", "python --version", "node --version", "dotnet --version", "dir"
         };
 
     // WorkspaceWrite additionally allows bounded build and test verbs.
@@ -22,9 +23,10 @@ public sealed class CommandAllowlist
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "git add", "git commit", "git checkout", "git switch", "git restore",
+            "git merge",
             "dotnet build", "dotnet test", "dotnet restore",
-            "npm ci", "npm run", "npm test",
-            "pytest"
+            "npm ci", "npm run", "npm test", "npx",
+            "pytest", "python -m", "pip install", "uv run"
         };
 
     // Verbs that reach outside the machine or destroy history are never allowed

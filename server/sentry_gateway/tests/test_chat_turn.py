@@ -94,6 +94,12 @@ class FakePool:
                     async def execute(self, sql, *args):
                         pool.executed.append((sql, args))
 
+                    async def fetch(self, sql, *args):
+                        return []
+
+                    async def fetchrow(self, sql, *args):
+                        return None
+
                 return Conn()
 
             async def __aexit__(self, *_):
@@ -113,6 +119,9 @@ class TargetPool(FakePool):
                 class Conn:
                     async def execute(self, sql, *args):
                         pool.executed.append((sql, args))
+
+                    async def fetch(self, sql, *args):
+                        return []
 
                     async def fetchrow(self, sql, *args):
                         if "FROM execution_nodes" in sql:

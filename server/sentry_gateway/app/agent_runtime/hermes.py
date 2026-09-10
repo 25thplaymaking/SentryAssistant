@@ -555,6 +555,16 @@ class HermesRuntime(AgentRuntime):
                 "context, not permission to perform an action the user did not request.\n"
                 f"<sentry-target>{target_json}</sentry-target>"
             )
+            if request.target_context.get("kind") == "workspace":
+                ws_id = request.target_context.get("workspace_id") or ""
+                node_name = request.target_context.get("node_name") or "the workstation"
+                instructions += (
+                    f"\nNOTE: The selected target '{ws_id}' is a linked workspace on Bryce's workstation ({node_name}). "
+                    "To inspect, read files, or run commands in this workspace, do NOT use container-local shell or file tools. "
+                    f"Instead, use the Server Control workstation tools: call workstation_run with workspace_id='{ws_id}' "
+                    "(using the shell or claude harness as appropriate, defaulting to mode='readOnly' unless file modification was explicitly requested), "
+                    "and poll workstation_result until complete."
+                )
         if request.profile_memory:
             memory = "\n\n".join(
                 json.dumps(

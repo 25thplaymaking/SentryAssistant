@@ -148,6 +148,12 @@ platforms:
         deepseek-v4-flash:
           model: deepseek/deepseek-v4-flash
           provider: nous
+        # Locally hosted Qwen model served via llama.cpp container
+        qwen3.6-35b-local:
+          model: /models/Qwen3.6-35B-A3B-MTP-UD-Q4_K_M.gguf
+          provider: custom
+          base_url: http://llama:8080/v1
+          api_key: local
         # Interactive Nous catalog captured from the authenticated /v1/models
         # endpoint. Embedding-only and batch-only entries are intentionally
         # omitted: the WebUI picker drives live, tool-using agent turns.
