@@ -61,7 +61,7 @@ class DispatchedWorkOrder(BaseModel):
 
 class RunResult(BaseModel):
     outcome: str = Field(pattern="^(succeeded|failed|cancelled)$")
-    summary: str = Field(max_length=4000)
+    summary: str = Field(max_length=16000)
     # Honest status boundary: implemented is not the same as deployed.
     status_boundary: str = Field(pattern="^(implemented|tested|deployed|user-confirmed)$")
     evidence: dict[str, Any] = Field(default_factory=dict)

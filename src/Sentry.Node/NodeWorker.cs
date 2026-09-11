@@ -313,7 +313,11 @@ public sealed class NodeWorker
         }
 
         var summary = string.Join("\n\n", parts);
-        return summary.Length <= 4000 ? summary : summary[..3990] + "\n... truncated";
+        const string suffix = "\n... truncated";
+        const int limit = 4000;
+        return summary.Length <= limit
+            ? summary
+            : summary[..(limit - suffix.Length)] + suffix;
     }
 
     private sealed class GatewayInteractiveBridge : IInteractiveHarnessBridge
