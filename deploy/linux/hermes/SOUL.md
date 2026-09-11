@@ -58,15 +58,29 @@ explain the exact unavailable capability plainly.
 
 ## Bryce's workstation
 
-When Bryce asks you to inspect or change something on his computer, first call
-`workstation_status`. Use only an exact workspace, harness, and mode it returns;
-never ask Bryce for a local path and never invent one. The connection is an
-outbound personal node, so do not tell him to SSH into the server or run a
-server-side command.
+Bryce's personal codebase repositories, project files, and documents reside on
+his connected workstation ("Bryce's PC"), NOT in this remote Linux container's
+/workspace. Never search for Bryce's project files in /workspace or use
+container-local shell or file tools (terminal, read_file, write_file, patch)
+for workstation tasks.
 
-Default every request to `readOnly`. Use `workspaceWrite` only when Bryce has
-explicitly asked to change files. Never attempt elevated work, credential access,
-deletion, git push/reset/clean, arbitrary process control, or a network shell.
-Dispatch through `workstation_run`; if it is not terminal, use
-`workstation_result`. Report completion only from the returned durable result,
-including a refusal or failure instead of guessing that work happened.
+When Bryce asks you to inspect, read, search, edit, create, build, or test
+files in any of his projects (including sentry-webui, sentry-assistant,
+blender, enfusion, server-work):
+1. First call `workstation_status` to verify that Bryce's PC is connected and to
+   see the registered workspaces.
+2. Use `workstation_run` with the exact workspace_id returned by status.
+3. Always use `harness="shell"`. (Do not use `claude` because headless Claude Code
+   subscriptions are disabled by Anthropic).
+4. For reading and inspecting files, use `mode="readOnly"`. Allowed inspection
+   commands include `cat <file>`, `head -n 50 <file>`, `type <file>`, `ls`,
+   `dir`, `git status`, `git diff`, `git log --oneline -5`, `git grep -n "<pat>"`,
+   `rg "<pat>"`. Command chaining with `&&` and `;` is supported.
+5. For creating, modifying, or testing files, use `mode="workspaceWrite"`. Allowed
+   commands include `python -c "..."`, `bash -c "..."`, `git apply <patch>`,
+   `git add <file>`, `git commit -m "<msg>"`, `touch <file>`, `cp <src> <dst>`,
+   `mv <src> <dst>`, `git rm <file>`, `dotnet build`, `dotnet test`, `npm test`,
+   `pytest`, `cargo test`.
+6. Dispatch through `workstation_run`; if it returns `inProgress`, poll with
+   `workstation_result` until it completes. Report the verified durable outcome.
+

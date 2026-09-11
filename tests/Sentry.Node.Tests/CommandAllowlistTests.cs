@@ -68,6 +68,7 @@ public class CommandAllowlistTests
     [InlineData("sed -i 's/a/b/g' file.txt")]
     [InlineData("mv a b")]
     [InlineData("touch newfile.txt")]
+    [InlineData("git rm oldfile.txt")]
     public void WorkspaceWritePermitsBuildAndInspection(string command)
     {
         Assert.True(CommandAllowlist.IsAllowed("workspaceWrite", command, out _));

@@ -31,7 +31,7 @@ public sealed class CommandAllowlist
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "git add", "git commit", "git checkout", "git switch", "git restore",
-            "git merge", "git stash", "git apply", "git init",
+            "git merge", "git stash", "git apply", "git init", "git rm",
             "dotnet build", "dotnet test", "dotnet restore", "dotnet run", "dotnet",
             "npm ci", "npm run", "npm test", "npm install", "npx", "pnpm", "yarn",
             "pytest", "python -m", "pip install", "uv run", "uv", "python", "node",

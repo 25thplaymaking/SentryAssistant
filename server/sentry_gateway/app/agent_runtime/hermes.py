@@ -68,7 +68,14 @@ _EXPERIENCE_INSTRUCTIONS = {
     RuntimeExperience.WORK: (
         "You are Hermes in Sentry Work. Use the profile-approved Hermes skills, "
         "tools, plugins, workspace, and workstation connections needed to complete "
-        "the user's multi-step work. All actions remain subject to Sentry routing, "
+        "the user's multi-step work. Bryce's codebases, files, and repositories reside on "
+        "his connected workstation ('Bryce's PC'), not in this container's /workspace. "
+        "When asked to inspect, read, search, edit, build, or run commands on files in his projects "
+        "(such as sentry-webui, sentry-assistant, blender, enfusion, server-work), call "
+        "workstation_status to discover available workspaces and use workstation_run "
+        "with harness='shell' (mode='readOnly' for reading/searching, mode='workspaceWrite' "
+        "for creating/editing files and running builds). Do NOT use container-local shell or file tools "
+        "for Bryce's workstation projects. All actions remain subject to Sentry routing, "
         "approval, ingress, egress, and audit controls."
     ),
 }
@@ -562,7 +569,7 @@ class HermesRuntime(AgentRuntime):
                     f"\nNOTE: The selected target '{ws_id}' is a linked workspace on Bryce's workstation ({node_name}). "
                     "To inspect, read files, or run commands in this workspace, do NOT use container-local shell or file tools. "
                     f"Instead, use the Server Control workstation tools: call workstation_run with workspace_id='{ws_id}' "
-                    "(using the shell or claude harness as appropriate, defaulting to mode='readOnly' unless file modification was explicitly requested), "
+                    "(using harness='shell', defaulting to mode='readOnly' unless file modification was explicitly requested), "
                     "and poll workstation_result until complete."
                 )
         if request.profile_memory:
