@@ -154,7 +154,7 @@ TOOLS = [
                 "title": {"type": "string", "minLength": 1, "maxLength": 200},
                 "instruction": {"type": "string", "minLength": 1, "maxLength": 20000},
                 "workspace_id": {"type": "string", "minLength": 1, "maxLength": 200},
-                "harness": {"type": "string", "enum": ["shell", "claude"], "default": "claude"},
+                "harness": {"type": "string", "enum": ["shell", "claude", "codex"], "default": "shell"},
                 "mode": {"type": "string", "enum": ["readOnly", "workspaceWrite"], "default": "readOnly"},
                 "wait_seconds": {"type": "integer", "minimum": 0, "maximum": 30, "default": 20},
             },

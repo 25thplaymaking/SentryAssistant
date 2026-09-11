@@ -12,9 +12,18 @@ public class CommandAllowlistTests
     [InlineData("git describe --tags")]
     [InlineData("git cat-file -p HEAD")]
     [InlineData("git fetch origin main")]
+    [InlineData("git blame Program.cs")]
     [InlineData("python --version")]
     [InlineData("node --version")]
     [InlineData("dotnet --version")]
+    [InlineData("cargo --version")]
+    [InlineData("rg pattern")]
+    [InlineData("cat README.md")]
+    [InlineData("ls -la")]
+    [InlineData("dir")]
+    [InlineData("findstr search test.txt")]
+    [InlineData("where git")]
+    [InlineData("which python")]
     public void ReadOnlyPermitsInspection(string command)
     {
         Assert.True(CommandAllowlist.IsAllowed("readOnly", command, out _));
@@ -40,6 +49,12 @@ public class CommandAllowlistTests
     [InlineData("pip install -e .")]
     [InlineData("uv run pytest")]
     [InlineData("npx vitest run")]
+    [InlineData("cargo check")]
+    [InlineData("npm install")]
+    [InlineData("git stash")]
+    [InlineData("rg test")]
+    [InlineData("cat test.txt")]
+    [InlineData("mkdir new_dir")]
     public void WorkspaceWritePermitsBuildAndInspection(string command)
     {
         Assert.True(CommandAllowlist.IsAllowed("workspaceWrite", command, out _));

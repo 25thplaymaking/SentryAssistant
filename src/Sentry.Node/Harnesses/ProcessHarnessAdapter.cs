@@ -111,9 +111,35 @@ public sealed class ProcessHarnessAdapter : IHarnessAdapter
             UseShellExecute = false,
             CreateNoWindow = true
         };
-        foreach (var argument in arguments)
+
+        const string gitUsrBin = @"C:\Program Files\Git\usr\bin";
+        if (Directory.Exists(gitUsrBin))
         {
-            startInfo.ArgumentList.Add(argument);
+            var existingPath = (startInfo.Environment.TryGetValue("PATH", out var pathVal) ? pathVal : null)
+                ?? Environment.GetEnvironmentVariable("PATH")
+                ?? string.Empty;
+            if (!existingPath.Contains(gitUsrBin, StringComparison.OrdinalIgnoreCase))
+            {
+                startInfo.Environment["PATH"] = gitUsrBin + ";" + existingPath;
+            }
+        }
+
+        if (fileName.Equals("dir", StringComparison.OrdinalIgnoreCase) || fileName.Equals("type", StringComparison.OrdinalIgnoreCase))
+        {
+            startInfo.FileName = "cmd.exe";
+            startInfo.ArgumentList.Add("/c");
+            startInfo.ArgumentList.Add(fileName);
+            foreach (var argument in arguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
+        }
+        else
+        {
+            foreach (var argument in arguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
         }
 
         events.Report(new HarnessProgress("tool.started", $"{Name}: {command}"));

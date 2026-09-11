@@ -30,7 +30,7 @@ class DispatchWork(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     instruction: str = Field(min_length=1, max_length=20_000)
     workspace_id: str = Field(min_length=1, max_length=200)
-    harness: Literal["shell", "claude"] = "claude"
+    harness: Literal["shell", "claude", "codex"] = "shell"
     mode: Literal["readOnly", "workspaceWrite"] = "readOnly"
 
 
