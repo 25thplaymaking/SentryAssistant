@@ -24,6 +24,12 @@ public class CommandAllowlistTests
     [InlineData("findstr search test.txt")]
     [InlineData("where git")]
     [InlineData("which python")]
+    [InlineData("git grep pattern")]
+    [InlineData("git ls-tree HEAD")]
+    [InlineData("git tag")]
+    [InlineData("git check-ignore file.txt")]
+    [InlineData("pwd")]
+    [InlineData("diff a.txt b.txt")]
     public void ReadOnlyPermitsInspection(string command)
     {
         Assert.True(CommandAllowlist.IsAllowed("readOnly", command, out _));
@@ -55,6 +61,13 @@ public class CommandAllowlistTests
     [InlineData("rg test")]
     [InlineData("cat test.txt")]
     [InlineData("mkdir new_dir")]
+    [InlineData("git grep pattern")]
+    [InlineData("bash -c 'echo 1'")]
+    [InlineData("patch -p1 -i fix.patch")]
+    [InlineData("git apply fix.patch")]
+    [InlineData("sed -i 's/a/b/g' file.txt")]
+    [InlineData("mv a b")]
+    [InlineData("touch newfile.txt")]
     public void WorkspaceWritePermitsBuildAndInspection(string command)
     {
         Assert.True(CommandAllowlist.IsAllowed("workspaceWrite", command, out _));

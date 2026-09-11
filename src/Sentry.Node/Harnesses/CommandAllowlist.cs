@@ -16,10 +16,14 @@ public sealed class CommandAllowlist
             "git status", "git log", "git diff", "git show", "git branch",
             "git rev-parse", "git ls-files", "git describe", "git cat-file",
             "git fetch", "git blame", "git shortlog", "git check-ref-format",
+            "git grep", "git ls-tree", "git tag", "git check-ignore",
+            "git rev-list", "git var", "git version", "git --version",
+            "git config",
             "python --version", "node --version", "dotnet --version", "cargo --version",
             "dir", "ls", "cat", "type", "head", "tail", "more", "wc",
             "rg", "ripgrep", "grep", "findstr", "find", "fd",
-            "where", "which", "echo"
+            "where", "which", "echo", "pwd", "env", "printenv",
+            "sort", "uniq", "cut", "tr", "diff", "awk"
         };
 
     // WorkspaceWrite additionally allows bounded build, test, and execution verbs.
@@ -27,13 +31,14 @@ public sealed class CommandAllowlist
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "git add", "git commit", "git checkout", "git switch", "git restore",
-            "git merge", "git stash",
+            "git merge", "git stash", "git apply", "git init",
             "dotnet build", "dotnet test", "dotnet restore", "dotnet run", "dotnet",
             "npm ci", "npm run", "npm test", "npm install", "npx", "pnpm", "yarn",
             "pytest", "python -m", "pip install", "uv run", "uv", "python", "node",
             "cargo build", "cargo test", "cargo check", "cargo run", "cargo",
             "xmake", "cmake", "msbuild",
-            "mkdir", "cp", "copy", "touch"
+            "bash", "sh", "patch", "sed",
+            "mkdir", "cp", "copy", "touch", "mv", "move"
         };
 
     // Verbs that reach outside the machine or destroy history are never allowed

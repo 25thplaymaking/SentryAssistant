@@ -26,7 +26,7 @@ def test_tool_surface_is_fixed_and_has_no_path_or_general_shell_field():
     assert "path" not in run_properties
     assert "command" not in run_properties
     assert run_properties["mode"]["enum"] == ["readOnly", "workspaceWrite"]
-    assert run_properties["harness"]["enum"] == ["shell", "claude"]
+    assert run_properties["harness"]["enum"] == ["shell", "claude", "codex"]
 
 
 def test_workstation_calls_only_fixed_gateway_routes(monkeypatch):

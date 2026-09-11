@@ -82,7 +82,7 @@ def dispatch_workstation(arguments: dict) -> dict:
         "title": arguments["title"],
         "instruction": arguments["instruction"],
         "workspace_id": arguments["workspace_id"],
-        "harness": arguments.get("harness", "claude"),
+        "harness": arguments.get("harness", "shell"),
         "mode": arguments.get("mode", "readOnly"),
     }
     dispatched = gateway_api("/api/runtime/workstation/work", payload=payload)

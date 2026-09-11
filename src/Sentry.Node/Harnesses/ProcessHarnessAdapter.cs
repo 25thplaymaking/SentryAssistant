@@ -61,6 +61,46 @@ public interface IInteractiveHarnessAdapter : IHarnessAdapter
 /// </summary>
 public sealed class ProcessHarnessAdapter : IHarnessAdapter
 {
+    private static readonly string[] KnownGitDirectories =
+    [
+        @"C:\Program Files\Git\cmd",
+        @"C:\Program Files\Git\bin",
+        @"C:\Program Files\Git\usr\bin",
+    ];
+
+    private static readonly string[] ExecutableExtensions = [".exe", ".cmd", ".bat"];
+
+    static ProcessHarnessAdapter()
+    {
+        EnsureProcessPathIncludesGit();
+    }
+
+    private static void EnsureProcessPathIncludesGit()
+    {
+        try
+        {
+            var existingPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+            var parts = existingPath.Split(';', StringSplitOptions.RemoveEmptyEntries).ToList();
+            var added = false;
+            foreach (var dir in KnownGitDirectories)
+            {
+                if (Directory.Exists(dir) && !parts.Any(p => p.Equals(dir, StringComparison.OrdinalIgnoreCase)))
+                {
+                    parts.Insert(0, dir);
+                    added = true;
+                }
+            }
+            if (added)
+            {
+                Environment.SetEnvironmentVariable("PATH", string.Join(';', parts));
+            }
+        }
+        catch
+        {
+            // Best effort; ignore if restricted.
+        }
+    }
+
     private readonly TimeSpan _timeout;
 
     public ProcessHarnessAdapter(string name, TimeSpan? timeout = null)
@@ -97,13 +137,21 @@ public sealed class ProcessHarnessAdapter : IHarnessAdapter
                 new Dictionary<string, object> { ["missingRoot"] = true });
         }
 
-        var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var parts = ParseCommandLine(command);
+        if (parts.Count == 0)
+        {
+            return new HarnessResult(
+                "failed",
+                "Empty command.",
+                "implemented",
+                new Dictionary<string, object> { ["emptyCommand"] = true });
+        }
+
         var fileName = parts[0];
         var arguments = parts.Skip(1).ToArray();
 
         var startInfo = new ProcessStartInfo
         {
-            FileName = fileName,
             WorkingDirectory = workspace.RootPath,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -112,17 +160,18 @@ public sealed class ProcessHarnessAdapter : IHarnessAdapter
             CreateNoWindow = true
         };
 
-        const string gitUsrBin = @"C:\Program Files\Git\usr\bin";
-        if (Directory.Exists(gitUsrBin))
+        var existingPath = (startInfo.Environment.TryGetValue("PATH", out var pathVal) ? pathVal : null)
+            ?? Environment.GetEnvironmentVariable("PATH")
+            ?? string.Empty;
+        var pathParts = existingPath.Split(';', StringSplitOptions.RemoveEmptyEntries).ToList();
+        foreach (var dir in KnownGitDirectories)
         {
-            var existingPath = (startInfo.Environment.TryGetValue("PATH", out var pathVal) ? pathVal : null)
-                ?? Environment.GetEnvironmentVariable("PATH")
-                ?? string.Empty;
-            if (!existingPath.Contains(gitUsrBin, StringComparison.OrdinalIgnoreCase))
+            if (Directory.Exists(dir) && !pathParts.Any(p => p.Equals(dir, StringComparison.OrdinalIgnoreCase)))
             {
-                startInfo.Environment["PATH"] = gitUsrBin + ";" + existingPath;
+                pathParts.Insert(0, dir);
             }
         }
+        startInfo.Environment["PATH"] = string.Join(';', pathParts);
 
         if (fileName.Equals("dir", StringComparison.OrdinalIgnoreCase) || fileName.Equals("type", StringComparison.OrdinalIgnoreCase))
         {
@@ -136,6 +185,7 @@ public sealed class ProcessHarnessAdapter : IHarnessAdapter
         }
         else
         {
+            startInfo.FileName = ResolveExecutable(fileName, workspace.RootPath);
             foreach (var argument in arguments)
             {
                 startInfo.ArgumentList.Add(argument);
@@ -235,4 +285,114 @@ public sealed class ProcessHarnessAdapter : IHarnessAdapter
 
     private static string Truncate(string value, int limit = 8000) =>
         value.Length <= limit ? value : value[..limit] + $"\n... truncated ({value.Length} chars)";
+
+    public static string ResolveExecutable(string fileName, string? workingDirectory = null)
+    {
+        if (string.IsNullOrWhiteSpace(fileName)) return fileName;
+
+        // If explicitly rooted or contains directory separators, test directly.
+        if (Path.IsPathRooted(fileName) || fileName.Contains(Path.DirectorySeparatorChar) || fileName.Contains(Path.AltDirectorySeparatorChar))
+        {
+            var target = Path.IsPathRooted(fileName) ? fileName : Path.Combine(workingDirectory ?? string.Empty, fileName);
+            if (File.Exists(target)) return target;
+            foreach (var ext in ExecutableExtensions)
+            {
+                var candidate = target + ext;
+                if (File.Exists(candidate)) return candidate;
+            }
+            return fileName;
+        }
+
+        // Search known Git directories followed by process PATH directories.
+        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        var pathDirs = pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var allDirs = KnownGitDirectories.Concat(pathDirs);
+
+        foreach (var dir in allDirs)
+        {
+            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) continue;
+
+            var direct = Path.Combine(dir, fileName);
+            if (File.Exists(direct)) return direct;
+
+            foreach (var ext in ExecutableExtensions)
+            {
+                var candidate = direct + ext;
+                if (File.Exists(candidate)) return candidate;
+            }
+        }
+
+        return fileName;
+    }
+
+    public static List<string> ParseCommandLine(string command)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrWhiteSpace(command)) return result;
+
+        var current = new StringBuilder();
+        char? inQuotes = null;
+        var escaping = false;
+
+        for (int i = 0; i < command.Length; i++)
+        {
+            char c = command[i];
+
+            if (escaping)
+            {
+                current.Append(c);
+                escaping = false;
+                continue;
+            }
+
+            if (c == '\\')
+            {
+                if (i + 1 < command.Length && (command[i + 1] == '"' || command[i + 1] == '\''))
+                {
+                    escaping = true;
+                    continue;
+                }
+                current.Append(c);
+                continue;
+            }
+
+            if (inQuotes.HasValue)
+            {
+                if (c == inQuotes.Value)
+                {
+                    inQuotes = null;
+                }
+                else
+                {
+                    current.Append(c);
+                }
+            }
+            else
+            {
+                if (c == '"' || c == '\'')
+                {
+                    inQuotes = c;
+                }
+                else if (char.IsWhiteSpace(c))
+                {
+                    if (current.Length > 0)
+                    {
+                        result.Add(current.ToString());
+                        current.Clear();
+                    }
+                }
+                else
+                {
+                    current.Append(c);
+                }
+            }
+        }
+
+        if (current.Length > 0)
+        {
+            result.Add(current.ToString());
+        }
+
+        return result;
+    }
 }

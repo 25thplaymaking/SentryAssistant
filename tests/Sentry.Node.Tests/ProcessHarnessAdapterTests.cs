@@ -137,5 +137,56 @@ public class ProcessHarnessAdapterTests
             catch (UnauthorizedAccessException) { }
         }
     }
+
+    [Fact]
+    public void ResolvesGitAndUnixUtilitiesWhenPresent()
+    {
+        var lsPath = ProcessHarnessAdapter.ResolveExecutable("ls");
+        Assert.True(File.Exists(lsPath), $"ls executable should resolve to an existing file, got: {lsPath}");
+
+        var catPath = ProcessHarnessAdapter.ResolveExecutable("cat");
+        Assert.True(File.Exists(catPath), $"cat executable should resolve to an existing file, got: {catPath}");
+
+        var gitPath = ProcessHarnessAdapter.ResolveExecutable("git");
+        Assert.True(File.Exists(gitPath), $"git executable should resolve to an existing file, got: {gitPath}");
+
+        var bashPath = ProcessHarnessAdapter.ResolveExecutable("bash");
+        Assert.True(File.Exists(bashPath), $"bash executable should resolve to an existing file, got: {bashPath}");
+    }
+
+    [Fact]
+    public void ParseCommandLineHandlesQuotesAndSeparators()
+    {
+        var parts1 = ProcessHarnessAdapter.ParseCommandLine("git commit -m \"fix: update allowlist\"");
+        Assert.Equal(new[] { "git", "commit", "-m", "fix: update allowlist" }, parts1);
+
+        var parts2 = ProcessHarnessAdapter.ParseCommandLine("bash -c 'echo \"hello\"'");
+        Assert.Equal(new[] { "bash", "-c", "echo \"hello\"" }, parts2);
+
+        var parts3 = ProcessHarnessAdapter.ParseCommandLine("git status && echo pwned");
+        Assert.Equal(new[] { "git", "status", "&&", "echo", "pwned" }, parts3);
+    }
+
+    [Fact]
+    public async Task RunsLsInWorkspace()
+    {
+        var root = Directory.CreateTempSubdirectory("sentry-node-ls").FullName;
+        try
+        {
+            var testFile = Path.Combine(root, "marker.txt");
+            await File.WriteAllTextAsync(testFile, "sample content", TestContext.Current.CancellationToken);
+
+            var (progress, events) = Recorder();
+            var result = await new ProcessHarnessAdapter("shell").ExecuteAsync(
+                "ls", "readOnly", Workspace(root), progress, TestContext.Current.CancellationToken);
+
+            Assert.Equal("succeeded", result.Outcome);
+            Assert.Contains("marker.txt", (string)result.Evidence["stdout"]);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }
 
